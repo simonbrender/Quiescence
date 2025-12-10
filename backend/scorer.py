@@ -304,6 +304,8 @@ async def scan_company(url: str) -> Dict:
     """
     Scan a single company URL and return complete analysis
     """
+    from datetime import datetime
+    
     parsed = urlparse(url)
     domain = parsed.netloc or parsed.path.split('/')[0]
     if not domain:
@@ -315,11 +317,16 @@ async def scan_company(url: str) -> Dict:
     # Calculate scores
     scores = await calculate_scores(domain, company_name)
     
+    now = datetime.now()
+    
     return {
         'id': hash(domain) % 1000000,  # Simple hash-based ID
         'name': company_name,
         'domain': domain,
+        'yc_batch': '',  # Empty for scanned companies
         'source': 'scanned',
+        'created_at': now.isoformat(),
+        'updated_at': now.isoformat(),
         **scores
     }
 
