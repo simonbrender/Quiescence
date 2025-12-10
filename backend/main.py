@@ -153,7 +153,9 @@ async def get_companies(
         params.append(source)
     
     if exclude_mock:
-        query += " AND source != 'mock'"
+        # Exclude mock data - mock companies have source='yc', 'antler', 'github', or 'mock'
+        # Only show companies that were actually scanned (source='scanned')
+        query += " AND source = 'scanned'"
     
     query += " ORDER BY (messaging_score + motion_score + market_score) / 3 DESC"
     
@@ -209,7 +211,7 @@ async def scan_company_endpoint(request: ScanRequest):
                 result['name'],
                 result['domain'],
                 result.get('yc_batch', ''),
-                result.get('source', 'scanned'),
+                'scanned',
                 result['messaging_score'],
                 result['motion_score'],
                 result['market_score'],
@@ -228,7 +230,7 @@ async def scan_company_endpoint(request: ScanRequest):
                 result['name'],
                 result['domain'],
                 result.get('yc_batch', ''),
-                result.get('source', 'scanned'),
+                'scanned',
                 result['messaging_score'],
                 result['motion_score'],
                 result['market_score'],

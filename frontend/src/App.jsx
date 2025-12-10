@@ -43,7 +43,8 @@ function App() {
   }
 
   const handleScan = async (url) => {
-    if (!url.trim()) {
+    const trimmedUrl = url.trim()
+    if (!trimmedUrl) {
       setScanError('Please enter a company URL or domain')
       return
     }
@@ -51,12 +52,12 @@ function App() {
     setScanning(true)
     setScanError('')
     try {
-      console.log('Scanning company:', url)
-      const result = await scanCompany(url)
+      console.log('Scanning company:', trimmedUrl)
+      const result = await scanCompany(trimmedUrl)
       console.log('Scan result:', result)
+      setScanInput('')
       await loadData()
       setSelectedCompany(result)
-      setScanInput('')
     } catch (error) {
       console.error('Error scanning company:', error)
       const errorMessage = error.response?.data?.detail || error.message || 'Error scanning company. Please check the URL and try again.'
