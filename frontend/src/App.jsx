@@ -68,7 +68,13 @@ function App() {
 
   const handleScanSubmit = (e) => {
     e.preventDefault()
-    handleScan(scanInput)
+    e.stopPropagation()
+    console.log('Form submitted with input:', scanInput)
+    if (scanInput.trim()) {
+      handleScan(scanInput)
+    } else {
+      setScanError('Please enter a company URL or domain')
+    }
   }
 
   return (
