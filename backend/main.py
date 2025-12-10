@@ -62,26 +62,26 @@ async def startup_event():
             ).fetchone()
             
             if existing:
-            conn.execute("""
-                UPDATE companies SET
+                conn.execute("""
+                    UPDATE companies SET
                     name = ?, domain = ?, yc_batch = ?, source = ?,
                     messaging_score = ?, motion_score = ?, market_score = ?,
                     stall_probability = ?, signals = ?, updated_at = ?
-                WHERE id = ?
-            """, (
-                company['name'],
-                company['domain'],
-                company.get('yc_batch', ''),
-                company.get('source', 'mock'),
-                company['messaging_score'],
-                company['motion_score'],
-                company['market_score'],
-                company['stall_probability'],
-                json.dumps(company.get('signals', {})),
-                datetime.now(),
-                company['id']
-            ))
-        else:
+                    WHERE id = ?
+                """, (
+                    company['name'],
+                    company['domain'],
+                    company.get('yc_batch', ''),
+                    company.get('source', 'mock'),
+                    company['messaging_score'],
+                    company['motion_score'],
+                    company['market_score'],
+                    company['stall_probability'],
+                    json.dumps(company.get('signals', {})),
+                    datetime.now(),
+                    company['id']
+                ))
+            else:
             conn.execute("""
                 INSERT INTO companies 
                 (id, name, domain, yc_batch, source, messaging_score, motion_score, market_score, stall_probability, signals, created_at, updated_at)
