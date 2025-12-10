@@ -82,24 +82,24 @@ async def startup_event():
                     company['id']
                 ))
             else:
-            conn.execute("""
-                INSERT INTO companies 
-                (id, name, domain, yc_batch, source, messaging_score, motion_score, market_score, stall_probability, signals, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                company['id'],
-                company['name'],
-                company['domain'],
-                company.get('yc_batch', ''),
-                company.get('source', 'mock'),
-                company['messaging_score'],
-                company['motion_score'],
-                company['market_score'],
-                company['stall_probability'],
-                json.dumps(company.get('signals', {})),
-                datetime.now(),
-                datetime.now()
-            ))
+                conn.execute("""
+                    INSERT INTO companies 
+                    (id, name, domain, yc_batch, source, messaging_score, motion_score, market_score, stall_probability, signals, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    company['id'],
+                    company['name'],
+                    company['domain'],
+                    company.get('yc_batch', ''),
+                    company.get('source', 'mock'),
+                    company['messaging_score'],
+                    company['motion_score'],
+                    company['market_score'],
+                    company['stall_probability'],
+                    json.dumps(company.get('signals', {})),
+                    datetime.now(),
+                    datetime.now()
+                ))
     conn.commit()
 
 class ScanRequest(BaseModel):
