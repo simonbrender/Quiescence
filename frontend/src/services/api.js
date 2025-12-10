@@ -29,3 +29,5 @@ export const scanCompany = async (url) => {
   return response.data
 }
 
+
+

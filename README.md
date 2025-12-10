@@ -22,6 +22,9 @@ Each company is scored on three vectors based on the Celerio Revenue Architectur
 
 - **GitHub API**: Engineering activity, commit frequency, repository stars
 - **Reddit PRAW**: Social mentions and sentiment analysis
+- **SimilarWeb API**: Traffic data, global rankings, monthly visits
+- **Wayback Machine**: Historical H1 volatility, snapshot analysis
+- **LinkedIn API**: Company insights, employee count, industry data
 - **Web Scraping**: Careers page analysis, homepage messaging analysis
 - **Y Combinator**: Batch scraping for Series A Crunch cohort (W22, S22, W23, S23)
 
@@ -81,9 +84,17 @@ GITHUB_TOKEN=your_github_token
 
 # Optional: SimilarWeb API for traffic data
 SIMILARWEB_API_KEY=your_similarweb_api_key
+
+# Optional: LinkedIn API for company insights (requires OAuth2 setup)
+LINKEDIN_CLIENT_ID=your_linkedin_client_id
+LINKEDIN_CLIENT_SECRET=your_linkedin_client_secret
 ```
 
-**Note**: The application works without API keys but will use fallback heuristics. For full functionality, GitHub and Reddit credentials are recommended.
+**Note**: The application works without API keys but will use fallback heuristics. For full functionality:
+- **GitHub** and **Reddit** credentials are recommended for core signals
+- **SimilarWeb** provides accurate traffic data (falls back to heuristics if not available)
+- **Wayback Machine** is free and requires no API key (rate limited)
+- **LinkedIn** requires OAuth2 setup - see [LinkedIn API documentation](https://docs.microsoft.com/en-us/linkedin/) for details
 
 ## API Endpoints
 
@@ -105,10 +116,13 @@ The application comes with 5 sample companies demonstrating different failure mo
 When scanning real companies, the system:
 
 1. **Fetches homepage** to analyze messaging (H1, title, jargon density)
-2. **Searches GitHub** for organization repositories and activity
-3. **Queries Reddit** for mentions in relevant subreddits
-4. **Scrapes careers pages** to detect hiring patterns
-5. **Estimates traffic** using domain heuristics (can be enhanced with SimilarWeb API)
+2. **Queries Wayback Machine** for historical H1 volatility and snapshot analysis
+3. **Searches GitHub** for organization repositories and activity
+4. **Queries Reddit** for mentions in relevant subreddits
+5. **Fetches SimilarWeb data** for traffic metrics and global rankings
+6. **Retrieves LinkedIn data** for company insights (if configured)
+7. **Scrapes careers pages** to detect hiring patterns
+8. **Calculates 3M vector scores** based on all collected signals
 
 ## Development
 

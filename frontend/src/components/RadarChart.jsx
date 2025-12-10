@@ -59,3 +59,5 @@ function RadarChartComponent({ messaging, motion, market, size = 200 }) {
 
 export default RadarChartComponent
 
+
+

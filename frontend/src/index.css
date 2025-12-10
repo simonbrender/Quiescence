@@ -16,6 +16,43 @@
     font-feature-settings: "rlig" 1, "calt" 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    position: relative;
+  }
+
+  /* Celerio starry night background effect */
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: 
+      radial-gradient(2px 2px at 20% 30%, hsl(160, 100%, 50%), transparent),
+      radial-gradient(2px 2px at 60% 70%, hsl(160, 100%, 50%), transparent),
+      radial-gradient(1px 1px at 50% 50%, hsl(160, 100%, 50%), transparent),
+      radial-gradient(1px 1px at 80% 10%, hsl(160, 100%, 50%), transparent),
+      radial-gradient(2px 2px at 90% 40%, hsl(160, 100%, 50%), transparent),
+      radial-gradient(1px 1px at 33% 60%, hsl(160, 100%, 50%), transparent),
+      radial-gradient(1px 1px at 10% 80%, hsl(160, 100%, 50%), transparent),
+      radial-gradient(2px 2px at 70% 20%, hsl(160, 100%, 50%), transparent),
+      radial-gradient(1px 1px at 40% 90%, hsl(160, 100%, 50%), transparent),
+      radial-gradient(1px 1px at 15% 15%, hsl(160, 100%, 50%), transparent);
+    background-size: 200% 200%;
+    background-position: 0% 0%;
+    opacity: 0.15;
+    pointer-events: none;
+    z-index: 0;
+    animation: starryNight 20s ease-in-out infinite;
+  }
+
+  @keyframes starryNight {
+    0%, 100% {
+      background-position: 0% 0%;
+    }
+    50% {
+      background-position: 100% 100%;
+    }
   }
 }
 
@@ -28,6 +65,8 @@
   .celerio-card {
     @apply bg-card border border-border/50 rounded-lg backdrop-blur-sm;
     transition: all 0.2s ease;
+    position: relative;
+    z-index: 1;
   }
   
   .celerio-card:hover {
@@ -36,7 +75,13 @@
   }
   
   .celerio-gradient {
-    background: linear-gradient(135deg, hsl(217, 91%, 60%) 0%, hsl(217, 91%, 50%) 100%);
+    background: linear-gradient(135deg, hsl(160, 100%, 50%) 0%, hsl(160, 100%, 40%) 100%);
+  }
+
+  /* Ensure content is above background */
+  .celerio-content {
+    position: relative;
+    z-index: 1;
   }
 }
 

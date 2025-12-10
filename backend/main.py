@@ -45,11 +45,16 @@ conn.execute("""
     )
 """)
 
-# Load mock data on startup
+# Load mock data on startup (only if database is empty)
 @app.on_event("startup")
 async def startup_event():
-    mock_companies = load_mock_data()
-    for company in mock_companies:
+    # Check if database has any companies
+    existing_count = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
+    
+    # Only load mock data if database is empty
+    if existing_count == 0:
+        mock_companies = load_mock_data()
+        for company in mock_companies:
         # Check if company exists
         existing = conn.execute(
             "SELECT id FROM companies WHERE id = ?",

@@ -1,0 +1,7 @@
+Celerio Vector (from Images),"Real-World Proxy Signal (The ""Free"" Data)",Logic / Metric
+"Messaging: ""Strategic Narrative""",Homepage H1 Volatility,Scrape Wayback Machine API. If H1 changes > 3 times in 6 months = Low Narrative Score.
+"Messaging: ""Positioning""",Meta Tag vs. LinkedIn Bio,"Cosine similarity check between Website <title> and LinkedIn ""About"". Low similarity = Confused Positioning."
+"Motion: ""Sales Velocity Physics""",Sales Hiring Delta,"Count ""Account Executive"" vs. ""SDR"" roles. High SDR + Low AE = Low Velocity / Burnout Motion."
+"Motion: ""Acquisition Leakage""",Traffic vs. Social Engagement,SimilarWeb (Global Rank) vs. Reddit/Twitter activity. High Rank + Zero Chatter = Leaky Bucket (Paid ads dependency).
+"Market: ""Product-Market Fit""",Technographic Churn,"Detect removal of expensive tools (e.g., dropping Segment/Mixpanel scripts) = Cash Conservation / PMF Loss."
+"Market: ""Segmentation/ICP""",Job Board Keyword Variance,"Are they hiring for ""Fintech Sales"" then ""Healthcare Sales""? High variance = ICP Thrashing."

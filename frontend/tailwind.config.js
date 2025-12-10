@@ -7,15 +7,15 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Celerio-inspired color palette
+        // Celerio color palette - matching website design
         border: "hsl(220, 13%, 18%)",
         input: "hsl(220, 13%, 18%)",
-        ring: "hsl(217, 91%, 60%)",
+        ring: "hsl(160, 100%, 50%)", // Teal/light green accent
         background: "hsl(220, 20%, 8%)",
         foreground: "hsl(210, 20%, 98%)",
         primary: {
-          DEFAULT: "hsl(217, 91%, 60%)",
-          foreground: "hsl(220, 20%, 8%)",
+          DEFAULT: "hsl(160, 100%, 50%)", // Vibrant teal/light green
+          foreground: "hsl(220, 20%, 8%)", // Dark text on light background
         },
         secondary: {
           DEFAULT: "hsl(220, 13%, 18%)",
@@ -26,7 +26,7 @@ export default {
           foreground: "hsl(215, 16%, 70%)",
         },
         accent: {
-          DEFAULT: "hsl(217, 91%, 60%)",
+          DEFAULT: "hsl(160, 100%, 50%)", // Teal accent
           foreground: "hsl(220, 20%, 8%)",
         },
         card: {
@@ -35,7 +35,7 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Inter: ['Inter', 'system-ui', 'sans-serif'],
+        sans: ['Inter', 'system-ui', 'sans-serif'],
       },
       borderRadius: {
         lg: "0.5rem",

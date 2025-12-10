@@ -52,20 +52,24 @@ async def check_social_signals(company_name: str, domain: str) -> Dict[str, floa
             'sentiment_score': 50.0
         }
 
-async def check_engineering_pulse(domain: str) -> Dict[str, float]:
+async def check_engineering_pulse(domain: str, company_name: str = "") -> Dict[str, float]:
     """
     Check GitHub activity and engineering velocity
     Returns: last_commit_days, issue_velocity, github_stars
     """
-    # Mock implementation - in production, use GitHub API
-    last_commit_days = 30
-    issue_velocity = 7  # days to close issues
-    github_stars = 100
+    from osint_sources import fetch_github_org, get_github_stats
     
+    # Try to find GitHub org
+    org_name = await fetch_github_org(domain)
+    if org_name:
+        stats = await get_github_stats(org_name)
+        return stats
+    
+    # Fallback to mock data
     return {
-        'last_commit_days': last_commit_days,
-        'issue_velocity': issue_velocity,
-        'github_stars': github_stars
+        'last_commit_days': 30,
+        'issue_velocity': 7,
+        'github_stars': 0
     }
 
 async def check_hiring_signals(domain: str) -> Dict[str, Optional[str]]:
@@ -87,10 +91,12 @@ async def check_hiring_signals(domain: str) -> Dict[str, Optional[str]]:
 async def analyze_messaging(domain: str, company_name: str) -> Dict[str, float]:
     """
     Analyze messaging vector:
-    - H1 volatility (via Wayback Machine proxy)
+    - H1 volatility (via Wayback Machine)
     - Positioning consistency (title vs LinkedIn)
     - Jargon density
     """
+    from osint_sources import get_wayback_machine_snapshots, get_linkedin_company_data
+    
     async with aiohttp.ClientSession() as session:
         # Try to fetch homepage
         homepage_url = f"https://{domain}" if not domain.startswith('http') else domain
@@ -118,7 +124,14 @@ async def analyze_messaging(domain: str, company_name: str) -> Dict[str, float]:
         jargon_count = sum(1 for word in ai_buzzwords if word in all_text)
         jargon_density = jargon_count / max(len(all_text.split()), 1)
         
-        # Positioning consistency (simplified - check if title and H1 are similar)
+        # Get Wayback Machine data for H1 volatility
+        wayback_data = await get_wayback_machine_snapshots(domain)
+        h1_volatility = wayback_data.get('h1_volatility', 0)
+        
+        # Get LinkedIn data for positioning consistency
+        linkedin_data = await get_linkedin_company_data(company_name, domain)
+        
+        # Positioning consistency (check if title and H1 are similar)
         positioning_score = 50.0
         if h1_text and title_text:
             # Simple similarity check
@@ -128,8 +141,10 @@ async def analyze_messaging(domain: str, company_name: str) -> Dict[str, float]:
                 overlap = len(h1_words & title_words) / len(h1_words | title_words)
                 positioning_score = overlap * 100
         
-        # H1 volatility (mock - in production, use Wayback Machine API)
-        h1_volatility = 0  # Assume stable for now
+        # If LinkedIn data available, enhance positioning score
+        if linkedin_data.get('industry'):
+            # Could compare LinkedIn industry with messaging positioning
+            positioning_score = min(100, positioning_score + 10)
         
         # Calculate messaging score
         # High score = low jargon, high consistency, low volatility
@@ -143,7 +158,8 @@ async def analyze_messaging(domain: str, company_name: str) -> Dict[str, float]:
             'messaging_score': max(0, min(100, messaging_score)),
             'h1_volatility': h1_volatility,
             'positioning_consistency': positioning_score,
-            'jargon_density': jargon_density
+            'jargon_density': jargon_density,
+            'wayback_snapshots': wayback_data.get('snapshot_count', 0)
         }
 
 async def analyze_motion(domain: str, company_name: str = "") -> Dict[str, float]:
@@ -197,7 +213,7 @@ async def analyze_market(domain: str, company_name: str = "") -> Dict[str, float
     """
     # Get signals
     social_data = await check_social_signals(company_name, domain)
-    eng_data = await check_engineering_pulse(domain)
+    eng_data = await check_engineering_pulse(domain, company_name)
     
     # Social sentiment component
     sentiment_score = social_data['sentiment_score']
