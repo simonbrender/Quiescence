@@ -18,7 +18,8 @@ function App() {
     ycBatch: '',
     source: '',
     vector: '',
-    search: ''
+    search: '',
+    excludeMock: true  // Hide mock data by default
   })
 
   useEffect(() => {
@@ -50,13 +51,16 @@ function App() {
     setScanning(true)
     setScanError('')
     try {
+      console.log('Scanning company:', url)
       const result = await scanCompany(url)
+      console.log('Scan result:', result)
       await loadData()
       setSelectedCompany(result)
       setScanInput('')
     } catch (error) {
       console.error('Error scanning company:', error)
-      setScanError('Error scanning company. Please check the URL and try again.')
+      const errorMessage = error.response?.data?.detail || error.message || 'Error scanning company. Please check the URL and try again.'
+      setScanError(errorMessage)
     } finally {
       setScanning(false)
     }

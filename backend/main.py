@@ -55,13 +55,13 @@ async def startup_event():
     if existing_count == 0:
         mock_companies = load_mock_data()
         for company in mock_companies:
-        # Check if company exists
-        existing = conn.execute(
-            "SELECT id FROM companies WHERE id = ?",
-            (company['id'],)
-        ).fetchone()
-        
-        if existing:
+            # Check if company exists
+            existing = conn.execute(
+                "SELECT id FROM companies WHERE id = ?",
+                (company['id'],)
+            ).fetchone()
+            
+            if existing:
             conn.execute("""
                 UPDATE companies SET
                     name = ?, domain = ?, yc_batch = ?, source = ?,
@@ -137,7 +137,8 @@ async def get_companies(
     yc_batch: Optional[str] = None,
     source: Optional[str] = None,
     min_score: Optional[float] = None,
-    vector: Optional[str] = None
+    vector: Optional[str] = None,
+    exclude_mock: Optional[bool] = False
 ):
     """Get all companies with optional filters"""
     query = "SELECT * FROM companies WHERE 1=1"
@@ -150,6 +151,9 @@ async def get_companies(
     if source:
         query += " AND source = ?"
         params.append(source)
+    
+    if exclude_mock:
+        query += " AND source != 'mock'"
     
     query += " ORDER BY (messaging_score + motion_score + market_score) / 3 DESC"
     
