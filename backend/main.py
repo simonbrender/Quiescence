@@ -3159,10 +3159,43 @@ async def discover_vcs_stream():
                 try:
                     async for update in discovery_gen:
                         await update_queue.put(update)
-                        # If discovery completed, release lock
+                        # If discovery completed, release lock and trigger portfolio scraping
                         if update.get('type') in ('complete', 'error'):
                             discovery_completed = True
                             print(f"[INFO] Discovery completed in background task")
+                            
+                            # Trigger portfolio scraping for all discovered VCs to get companies
+                            if update.get('type') == 'complete':
+                                try:
+                                    print("[INFO] Triggering portfolio scraping for all discovered VCs...")
+                                    # Get all VC firm names
+                                    vc_results = conn.execute("SELECT firm_name FROM vcs").fetchall()
+                                    vc_names = [row[0] for row in vc_results if row[0]]
+                                    
+                                    if vc_names:
+                                        print(f"[INFO] Found {len(vc_names)} VCs, triggering portfolio scraping in background...")
+                                        # Trigger portfolio scraping in background task
+                                        async def trigger_scraping():
+                                            try:
+                                                import aiohttp
+                                                async with aiohttp.ClientSession() as session:
+                                                    async with session.post(
+                                                        'http://localhost:8000/portfolios/scrape',
+                                                        json={'portfolio_names': vc_names[:50]},  # Limit to first 50 to avoid timeout
+                                                        timeout=aiohttp.ClientTimeout(total=3600)  # 1 hour timeout
+                                                    ) as resp:
+                                                        result = await resp.json()
+                                                        print(f"[INFO] Portfolio scraping triggered: {result.get('message', 'Started')}")
+                                            except Exception as scrape_err:
+                                                print(f"[ERROR] Failed to trigger portfolio scraping: {scrape_err}")
+                                        
+                                        # Start scraping task (don't await - let it run in background)
+                                        asyncio.create_task(trigger_scraping())
+                                    else:
+                                        print("[INFO] No VCs found to scrape")
+                                except Exception as scrape_err:
+                                    print(f"[ERROR] Failed to trigger portfolio scraping: {scrape_err}")
+                            
                             # Release lock when discovery completes
                             with _vc_discovery_lock:
                                 _vc_discovery_in_progress = False

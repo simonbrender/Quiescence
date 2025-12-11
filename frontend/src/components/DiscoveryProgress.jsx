@@ -53,6 +53,7 @@ export default function DiscoveryProgress({ onComplete, onClose }) {
             ...data.stats
           }))
         } else if (data.type === 'log') {
+          setLastUpdate(new Date())
           setLogs(prev => [...prev.slice(-49), {
             level: data.level || 'info',
             message: data.message,
@@ -114,10 +115,32 @@ export default function DiscoveryProgress({ onComplete, onClose }) {
       }
     }
 
+    // Poll for company count and backend status
+    const pollStatus = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/companies?limit=1')
+        if (response.ok) {
+          const data = await response.json()
+          if (Array.isArray(data)) {
+            setCompanyCount(data.length)
+          }
+        }
+      } catch (err) {
+        console.error('Error polling status:', err)
+      }
+    }
+
+    // Poll every 10 seconds
+    pollIntervalRef.current = setInterval(pollStatus, 10000)
+    pollStatus() // Initial poll
+
     return () => {
       if (eventSourceRef.current) {
         eventSourceRef.current.close()
         eventSourceRef.current = null
+      }
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current)
       }
     }
   }, [onComplete])
@@ -194,7 +217,7 @@ export default function DiscoveryProgress({ onComplete, onClose }) {
             </div>
           </div>
           
-          <div className="grid grid-cols-3 gap-4 mt-4">
+          <div className="grid grid-cols-4 gap-4 mt-4">
             <div className="bg-gray-800/50 rounded-lg p-3">
               <div className="text-xs text-gray-400 mb-1">VCs</div>
               <div className="text-xl font-bold text-cyan-400">{stats.vcs}</div>
@@ -207,27 +230,56 @@ export default function DiscoveryProgress({ onComplete, onClose }) {
               <div className="text-xs text-gray-400 mb-1">Studios</div>
               <div className="text-xl font-bold text-purple-400">{stats.studios}</div>
             </div>
+            <div className="bg-gray-800/50 rounded-lg p-3">
+              <div className="text-xs text-gray-400 mb-1">Companies in DB</div>
+              <div className="text-xl font-bold text-green-400">{companyCount}</div>
+              {companyCount >= 1000 && (
+                <div className="text-xs text-green-400 mt-1">✓ Target reached!</div>
+              )}
+            </div>
           </div>
+          {lastUpdate && (
+            <div className="text-xs text-gray-500 mt-2">
+              Last update: {lastUpdate.toLocaleTimeString()}
+            </div>
+          )}
         </div>
 
         {/* Logs */}
         <div className="flex-1 overflow-y-auto p-6">
-          <h3 className="text-sm font-semibold text-gray-400 mb-3">Activity Log</h3>
-          <div className="space-y-2">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-gray-400">Activity Log</h3>
+            <div className="text-xs text-gray-500">
+              {logs.length} entries {logs.length > 0 && `(showing last ${Math.min(logs.length, 50)})`}
+            </div>
+          </div>
+          <div className="space-y-2" ref={(el) => {
+            if (el) {
+              el.scrollTop = el.scrollHeight
+            }
+          }}>
             {logs.length === 0 && (
               <p className="text-sm text-gray-500">Waiting for updates...</p>
             )}
             {logs.slice(-50).map((log, idx) => (
               <div
                 key={idx}
-                className={`text-xs font-mono p-2 rounded ${
-                  log.level === 'error' ? 'bg-red-500/10 text-red-400' :
-                  log.level === 'warn' ? 'bg-yellow-500/10 text-yellow-400' :
-                  log.level === 'success' ? 'bg-green-500/10 text-green-400' :
-                  'bg-gray-800/50 text-gray-300'
+                className={`text-xs font-mono p-2 rounded transition-all ${
+                  log.level === 'error' ? 'bg-red-500/10 text-red-400 border-l-2 border-red-500' :
+                  log.level === 'warn' ? 'bg-yellow-500/10 text-yellow-400 border-l-2 border-yellow-500' :
+                  log.level === 'success' ? 'bg-green-500/10 text-green-400 border-l-2 border-green-500' :
+                  'bg-gray-800/50 text-gray-300 border-l-2 border-gray-700'
                 }`}
               >
                 <span className="text-gray-500">[{log.timestamp}]</span>{' '}
+                <span className={`font-semibold ${
+                  log.level === 'error' ? 'text-red-400' :
+                  log.level === 'warn' ? 'text-yellow-400' :
+                  log.level === 'success' ? 'text-green-400' :
+                  'text-gray-400'
+                }`}>
+                  [{log.level?.toUpperCase() || 'INFO'}]
+                </span>{' '}
                 {log.message}
               </div>
             ))}
