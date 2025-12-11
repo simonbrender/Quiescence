@@ -313,7 +313,8 @@ async def scrape_yc_batch(batch: str) -> List[Dict]:
                     # YC website structure - find company cards/links
                     company_links = soup.find_all('a', href=re.compile(r'/companies/'))
                     
-                    for link in company_links[:100]:  # Limit to 100
+                    # NO LIMIT - scrape ALL companies
+                    for link in company_links:
                         company_name = link.get_text().strip()
                         if not company_name or len(company_name) < 2:
                             continue
@@ -364,7 +365,8 @@ async def scrape_yc_batch(batch: str) -> List[Dict]:
                     # YC website structure - find company links
                     company_links = soup.find_all('a', href=re.compile(r'/companies/'))
                     
-                    for link in company_links[:100]:  # Limit to 100
+                    # NO LIMIT - scrape ALL companies
+                    for link in company_links:
                         company_name = link.get_text().strip()
                         if company_name and len(company_name) > 2:
                             # Try to extract domain from link or nearby text

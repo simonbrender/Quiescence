@@ -39,7 +39,7 @@ export function PremiumPaywall({ onUnlock }: PremiumPaywallProps) {
                 "Complete 3-Vector Diagnostic Report",
                 "90-Day Prescriptive Action Plan",
                 "Live Revenue Dashboard",
-                "Weekly AI-Powered Progress Audits",
+                "Weekly progress reviews with clear intervention recommendations",
                 "Direct Slack Access to Architects",
                 "Quarterly Strategy Recalibration",
               ].map((item) => (

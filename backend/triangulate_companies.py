@@ -226,3 +226,6 @@ if __name__ == "__main__":
         print(f"  - {company['name']} ({company['domain']}) [{company.get('source', 'unknown')}]")
 
 
+
+
+

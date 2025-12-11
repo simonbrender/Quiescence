@@ -1,0 +1,6 @@
+name,domain,source,last_raise_stage,funding_amount,employee_count,focus_areas,yc_batch,created_at,messaging_score,motion_score,market_score
+Anthropic,anthropic.com,scanned,,200.0,500,"[""B2B SaaS""]",,2025-12-10 17:18:20.220792,47.5,62.0,33.0
+Celerio,celerio.sg,scanned,,,,"[""B2B SaaS""]",,2025-12-10 17:24:26.005625,60.0,56.0,33.0
+Celerio,celerio.sg,scanned,,,,"[""B2B SaaS""]",,2025-12-11 08:12:42.181129,60.0,56.0,33.0
+Test,test.com,scanned,,,,"[""B2B SaaS""]",,2025-12-10 17:00:20.315031,50.0,62.0,53.0
+Celerio,celerio.sg,scanned,,,,"[""B2B SaaS""]",,2025-12-10 17:12:01.603393,60.0,66.0,53.0

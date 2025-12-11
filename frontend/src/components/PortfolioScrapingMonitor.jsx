@@ -45,10 +45,34 @@ function PortfolioScrapingMonitor({ sessionId, onClose, onComplete }) {
         setLatestScreenshot(`data:image/png;base64,${data.screenshot}`)
       }
       
+      // Handle companies_added event - new companies saved to database
+      if (data.type === 'companies_added' && data.companies) {
+        const timestamp = Date.now()
+        const newCompanies = Array.isArray(data.companies) ? data.companies : []
+        const totalSaved = data.total_saved || 0
+        
+        // Update stats with new companies
+        setStats(prev => ({
+          ...prev,
+          total: totalSaved
+        }))
+        
+        // Update chart data
+        setChartData(prev => {
+          const newData = [...prev, { time: timestamp, companies: totalSaved }]
+          return newData.slice(-50) // Keep last 50 data points
+        })
+        
+        // Emit event to parent component to add companies to UI
+        if (onComplete && typeof onComplete === 'function') {
+          onComplete({ type: 'companies_added', companies: newCompanies, total: totalSaved })
+        }
+      }
+      
       // Update stats
       if (data.type === 'progress') {
         const timestamp = Date.now()
-        const totalCompanies = data.total_companies || 0
+        const totalCompanies = data.total_companies || data.companies_found || 0
         
         if (data.portfolio === 'YC' || data.source === 'yc') {
           setStats(prev => ({

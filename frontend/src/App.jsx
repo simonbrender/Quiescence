@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
-import { Search, Filter, TrendingUp, AlertTriangle, CheckCircle, XCircle, Sparkles, Building2, ArrowRight } from 'lucide-react'
+import { Search, Filter, TrendingUp, AlertTriangle, CheckCircle, XCircle, Sparkles, Building2, ArrowRight, Download, Network } from 'lucide-react'
 import CompanyCard from './components/CompanyCard'
 import RadarChart from './components/RadarChart'
 import StatsPanel from './components/StatsPanel'
 import CompanyDetail from './components/CompanyDetail'
 import PortfolioSelector from './components/PortfolioSelector'
 import AdvancedSearch from './components/AdvancedSearch'
-import { getCompanies, getStats, scanCompany } from './services/api'
+import InvestorGraph from './components/InvestorGraph'
+import { getCompanies, getStats, scanCompany, exportCompanies } from './services/api'
 import { Button } from './components/ui/button'
 import { Card } from './components/ui/card'
 
@@ -20,19 +21,32 @@ function App() {
   const [scanError, setScanError] = useState('')
   const [showPortfolioSelector, setShowPortfolioSelector] = useState(false)
   const [showAdvancedSearch, setShowAdvancedSearch] = useState(false)
+  const [showInvestorGraph, setShowInvestorGraph] = useState(false)
   const [searchResults, setSearchResults] = useState(null)
   const [searchQuery, setSearchQuery] = useState(null)
+  const [exporting, setExporting] = useState(false)
   const [filters, setFilters] = useState({
     ycBatch: '',
     source: '',
     vector: '',
     search: '',
-    excludeMock: true
+    excludeMock: false  // Changed to false to show all companies including portfolio companies
   })
 
   useEffect(() => {
     loadData()
   }, [filters])
+  
+  // Refresh company list periodically to show new companies as they're added
+  useEffect(() => {
+    if (!loading) {
+      const interval = setInterval(() => {
+        loadData()
+      }, 10000) // Refresh every 10 seconds to show new companies
+      
+      return () => clearInterval(interval)
+    }
+  }, [loading])
 
   const loadData = async () => {
     setLoading(true)
@@ -97,6 +111,42 @@ function App() {
     setShowAdvancedSearch(true)
   }
 
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      const data = await exportCompanies()
+      // Convert to CSV
+      if (data && data.length > 0) {
+        const headers = Object.keys(data[0])
+        const csvRows = [
+          headers.join(','),
+          ...data.map(row => 
+            headers.map(header => {
+              const value = row[header]
+              if (value === null || value === undefined) return ''
+              if (typeof value === 'object') return JSON.stringify(value)
+              return String(value).replace(/"/g, '""')
+            }).map(v => `"${v}"`).join(','))
+        ]
+        const csvContent = csvRows.join('\n')
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+        const link = document.createElement('a')
+        const url = URL.createObjectURL(blob)
+        link.setAttribute('href', url)
+        link.setAttribute('download', `companies_export_${new Date().toISOString().split('T')[0]}.csv`)
+        link.style.visibility = 'hidden'
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+      }
+    } catch (error) {
+      console.error('Export error:', error)
+      alert('Failed to export companies. Please try again.')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   // If search results are available, show full-page results view
   if (searchResults && searchResults.length > 0) {
     return (
@@ -154,6 +204,21 @@ function App() {
                 >
                   Portfolios
                 </button>
+                <button 
+                  onClick={() => setShowInvestorGraph(!showInvestorGraph)}
+                  className="text-sm text-white/80 hover:text-cyan-400 transition-colors flex items-center gap-2"
+                >
+                  <Network className="w-4 h-4" />
+                  Graph View
+                </button>
+                <button 
+                  onClick={handleExport}
+                  disabled={exporting}
+                  className="text-sm text-white/80 hover:text-cyan-400 transition-colors flex items-center gap-2 disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4" />
+                  {exporting ? 'Exporting...' : 'Export'}
+                </button>
                 <Button
                   size="sm"
                   className="text-sm px-4 py-2 text-[#0A1628] font-semibold"
@@ -201,6 +266,26 @@ function App() {
               </div>
               <div className="p-6">
                 <PortfolioSelector onScrapeComplete={handlePortfolioScrapeComplete} />
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Investor Graph Modal */}
+        {showInvestorGraph && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <Card className="glass-card border-cyan-400/30 max-w-[95vw] w-full max-h-[95vh] overflow-hidden flex flex-col">
+              <div className="sticky top-0 glass-card border-b border-cyan-400/30 p-6 flex items-center justify-between bg-white/5 backdrop-blur-sm">
+                <h2 className="text-xl font-semibold text-white">Investor-Company Relationship Graph</h2>
+                <button
+                  onClick={() => setShowInvestorGraph(false)}
+                  className="text-white/60 hover:text-white transition-colors"
+                >
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <InvestorGraph />
               </div>
             </Card>
           </div>

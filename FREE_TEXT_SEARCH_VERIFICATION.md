@@ -192,3 +192,6 @@ Check backend console logs for:
 - Web discovery may take 10-30 seconds depending on sources
 - Database filters are now strict - companies without data won't match
 
+
+
+

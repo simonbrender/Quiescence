@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 import re
 from urllib.parse import urlparse, quote_plus
 import json
+from datetime import datetime
 
 # Try to import crawl4ai for advanced web scraping
 try:

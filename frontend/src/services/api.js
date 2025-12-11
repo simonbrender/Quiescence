@@ -7,6 +7,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 300000, // 5 minutes default timeout for long operations
 })
 
 export const getCompanies = async (filters = {}) => {
@@ -15,9 +16,25 @@ export const getCompanies = async (filters = {}) => {
   if (filters.source) params.append('source', filters.source)
   if (filters.vector) params.append('vector', filters.vector)
   if (filters.excludeMock) params.append('exclude_mock', 'true')
+  // Request a high limit to get all companies (or use export endpoint for full dataset)
+  if (!filters.limit) {
+    params.append('limit', '10000')
+  } else {
+    params.append('limit', filters.limit.toString())
+  }
   
   const response = await api.get(`/companies?${params.toString()}`)
   return response.data
+}
+
+export const exportCompanies = async () => {
+  try {
+    const response = await api.get('/companies/export')
+    return response.data
+  } catch (error) {
+    console.error('Export error:', error)
+    throw error
+  }
 }
 
 export const getStats = async () => {
@@ -66,8 +83,38 @@ export const scrapePortfolios = async (portfolioNames) => {
 }
 
 export const discoverVCs = async () => {
-  const response = await api.post('/portfolios/discover')
-  return response.data
+  try {
+    const response = await api.post('/portfolios/discover', {}, { timeout: 300000 }) // 5 minute timeout for discovery
+    return response.data
+  } catch (error) {
+    console.error('discoverVCs error:', error)
+    console.error('Error details:', {
+      message: error.message,
+      code: error.code,
+      response: error.response?.data,
+      status: error.response?.status
+    })
+    
+    // Handle network errors (backend not running, CORS, etc.)
+    if (!error.response) {
+      // Network Error is a generic axios error when backend is unreachable
+      if (error.message === 'Network Error' || error.code === 'ECONNREFUSED' || error.message?.includes('refused')) {
+        throw new Error('Backend server is not running. Please start it with: python backend/main.py')
+      }
+      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        throw new Error('Discovery request timed out. This may take several minutes. Please try again.')
+      }
+      throw new Error(`Network error: ${error.message || 'Unable to connect to backend server. Please ensure the backend is running.'}`)
+    }
+    
+    // Handle HTTP errors
+    if (error.response) {
+      const detail = error.response.data?.detail || error.response.data?.message || error.response.statusText
+      throw new Error(detail || `Discovery failed: ${error.response.status}`)
+    }
+    
+    throw error
+  }
 }
 
 export const addVC = async (vcData) => {
@@ -132,13 +179,21 @@ export const freeTextSearch = async (query, sessionId = null) => {
 }
 
 export const getPortfoliosFiltered = async (filters = {}) => {
-  const params = new URLSearchParams()
-  if (filters.stage) params.append('stage', filters.stage)
-  if (filters.focus_area) params.append('focus_area', filters.focus_area)
-  if (filters.vc_type) params.append('vc_type', filters.vc_type)
-  
-  const response = await api.get(`/portfolios?${params.toString()}`)
-  return response.data
+  try {
+    const params = new URLSearchParams()
+    if (filters.stage) params.append('stage', filters.stage)
+    if (filters.focus_area) params.append('focus_area', filters.focus_area)
+    if (filters.vc_type) params.append('vc_type', filters.vc_type)
+    
+    const response = await api.get(`/portfolios?${params.toString()}`)
+    return response.data
+  } catch (error) {
+    console.error('getPortfoliosFiltered error:', error)
+    if (error.code === 'ECONNREFUSED' || error.message?.includes('refused')) {
+      throw new Error('Backend server is not running. Please start it with: python backend/main.py')
+    }
+    throw error
+  }
 }
 
 

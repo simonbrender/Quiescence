@@ -1,0 +1,480 @@
+{
+  "timestamp": "2025-12-11T11:56:48.810108",
+  "api_base_url": "http://localhost:8000",
+  "total_tests": 12,
+  "passed": 10,
+  "failed": 2,
+  "results": [
+    {
+      "test_name": "Seed/Series A AI/B2B Companies",
+      "query": "Seed/Series A AI/B2B companies 12\u201318 months post-raise, typically with $3\u201315m in total funding from a tier 1/2 VC, studio, incubator or accelerator and 10\u201380 employees",
+      "parse_success": true,
+      "search_success": true,
+      "validation_success": true,
+      "companies_found": 0,
+      "elapsed_time": 12.064986228942871,
+      "companies": []
+    },
+    {
+      "test_name": "YC Portfolio Companies",
+      "query": "retrieve the YC and Antler portfolios",
+      "parse_success": true,
+      "search_success": true,
+      "validation_success": true,
+      "companies_found": 0,
+      "elapsed_time": 11.190821409225464,
+      "companies": []
+    },
+    {
+      "test_name": "Series B Fintech Companies",
+      "query": "Series B fintech companies with 50-200 employees and $10-50M funding",
+      "parse_success": true,
+      "search_success": true,
+      "validation_success": true,
+      "companies_found": 0,
+      "elapsed_time": 12.034493446350098,
+      "companies": []
+    },
+    {
+      "test_name": "Pre-Seed AI Startups",
+      "query": "Pre-Seed AI/ML startups with less than 10 employees",
+      "parse_success": true,
+      "search_success": true,
+      "validation_success": true,
+      "companies_found": 0,
+      "elapsed_time": 13.142110586166382,
+      "companies": []
+    },
+    {
+      "test_name": "Enterprise SaaS Companies",
+      "query": "Enterprise SaaS companies in Series A or Series B stage",
+      "parse_success": true,
+      "search_success": true,
+      "validation_success": true,
+      "companies_found": 5,
+      "elapsed_time": 22.6224844455719,
+      "companies": [
+        {
+          "id": 574118,
+          "name": "Anthropic",
+          "domain": "anthropic.com",
+          "yc_batch": "",
+          "source": "scanned",
+          "messaging_score": 47.5,
+          "motion_score": 62.0,
+          "market_score": 33.0,
+          "stall_probability": "medium",
+          "signals": {
+            "messaging": {
+              "messaging_score": 47.5,
+              "h1_volatility": 0,
+              "positioning_consistency": 0.0,
+              "jargon_density": 0.03125,
+              "wayback_snapshots": 100
+            },
+            "motion": {
+              "motion_score": 62.0,
+              "traffic_score": 50.0,
+              "hiring_status": "active",
+              "sales_to_eng_ratio": 0.6666666666666666
+            },
+            "market": {
+              "market_score": 33.0,
+              "sentiment_score": 50.0,
+              "reddit_mentions": 0,
+              "github_stars": 0,
+              "last_commit_days": 999
+            }
+          },
+          "funding_amount": 200.0,
+          "funding_currency": null,
+          "employee_count": 500,
+          "last_raise_date": null,
+          "last_raise_stage": null,
+          "fund_tier": null,
+          "focus_areas": [
+            "B2B SaaS"
+          ],
+          "created_at": "2025-12-10 17:18:20.220792",
+          "updated_at": "2025-12-11 11:48:45.702198"
+        },
+        {
+          "id": 917123,
+          "name": "Celerio",
+          "domain": "celerio.sg",
+          "yc_batch": "",
+          "source": "scanned",
+          "messaging_score": 60.0,
+          "motion_score": 56.0,
+          "market_score": 33.0,
+          "stall_probability": "medium",
+          "signals": {
+            "messaging": {
+              "messaging_score": 60.0,
+              "h1_volatility": 0,
+              "positioning_consistency": 0.0,
+              "jargon_density": 0.0,
+              "wayback_snapshots": 12
+            },
+            "motion": {
+              "motion_score": 56.0,
+              "traffic_score": 55.0,
+              "hiring_status": "unknown",
+              "sales_to_eng_ratio": 1.0
+            },
+            "market": {
+              "market_score": 33.0,
+              "sentiment_score": 50.0,
+              "reddit_mentions": 0,
+              "github_stars": 0,
+              "last_commit_days": 999
+            }
+          },
+          "funding_amount": null,
+          "funding_currency": null,
+          "employee_count": null,
+          "last_raise_date": null,
+          "last_raise_stage": null,
+          "fund_tier": null,
+          "focus_areas": [
+            "B2B SaaS"
+          ],
+          "created_at": "2025-12-10 17:24:26.005625",
+          "updated_at": "2025-12-11 11:48:39.629264"
+        },
+        {
+          "id": 804891,
+          "name": "Celerio",
+          "domain": "celerio.sg",
+          "yc_batch": "",
+          "source": "scanned",
+          "messaging_score": 60.0,
+          "motion_score": 56.0,
+          "market_score": 33.0,
+          "stall_probability": "medium",
+          "signals": {
+            "messaging": {
+              "messaging_score": 60.0,
+              "h1_volatility": 0,
+              "positioning_consistency": 0.0,
+              "jargon_density": 0.0,
+              "wayback_snapshots": 0
+            },
+            "motion": {
+              "motion_score": 56.0,
+              "traffic_score": 55.0,
+              "hiring_status": "unknown",
+              "sales_to_eng_ratio": 1.0
+            },
+            "market": {
+              "market_score": 33.0,
+              "sentiment_score": 50.0,
+              "reddit_mentions": 0,
+              "github_stars": 0,
+              "last_commit_days": 999
+            }
+          },
+          "funding_amount": null,
+          "funding_currency": null,
+          "employee_count": null,
+          "last_raise_date": null,
+          "last_raise_stage": null,
+          "fund_tier": null,
+          "focus_areas": [
+            "B2B SaaS"
+          ],
+          "created_at": "2025-12-11 08:12:42.181129",
+          "updated_at": "2025-12-11 11:49:44.358900"
+        },
+        {
+          "id": 464087,
+          "name": "Test",
+          "domain": "test.com",
+          "yc_batch": "",
+          "source": "scanned",
+          "messaging_score": 50.0,
+          "motion_score": 62.0,
+          "market_score": 53.0,
+          "stall_probability": "medium",
+          "signals": {
+            "messaging": {
+              "messaging_score": 50.0,
+              "h1_volatility": 0,
+              "positioning_consistency": 50.0,
+              "jargon_density": 0.05
+            },
+            "motion": {
+              "motion_score": 62.0,
+              "traffic_score": 50.0,
+              "hiring_status": "active",
+              "sales_to_eng_ratio": 1.0
+            },
+            "market": {
+              "market_score": 53.0,
+              "sentiment_score": 60,
+              "reddit_mentions": 5,
+              "github_stars": 100,
+              "last_commit_days": 30
+            }
+          },
+          "funding_amount": null,
+          "funding_currency": null,
+          "employee_count": null,
+          "last_raise_date": null,
+          "last_raise_stage": null,
+          "fund_tier": null,
+          "focus_areas": [
+            "B2B SaaS"
+          ],
+          "created_at": "2025-12-10 17:00:20.315031",
+          "updated_at": "2025-12-11 11:48:47.115645"
+        },
+        {
+          "id": 131494,
+          "name": "Celerio",
+          "domain": "celerio.sg",
+          "yc_batch": "",
+          "source": "scanned",
+          "messaging_score": 60.0,
+          "motion_score": 66.0,
+          "market_score": 53.0,
+          "stall_probability": "medium",
+          "signals": {
+            "messaging": {
+              "messaging_score": 60.0,
+              "h1_volatility": 0,
+              "positioning_consistency": 0.0,
+              "jargon_density": 0.0
+            },
+            "motion": {
+              "motion_score": 66.0,
+              "traffic_score": 60.0,
+              "hiring_status": "active",
+              "sales_to_eng_ratio": 1.0
+            },
+            "market": {
+              "market_score": 53.0,
+              "sentiment_score": 60,
+              "reddit_mentions": 5,
+              "github_stars": 100,
+              "last_commit_days": 30
+            }
+          },
+          "funding_amount": null,
+          "funding_currency": null,
+          "employee_count": null,
+          "last_raise_date": null,
+          "last_raise_stage": null,
+          "fund_tier": null,
+          "focus_areas": [
+            "B2B SaaS"
+          ],
+          "created_at": "2025-12-10 17:12:01.603393",
+          "updated_at": "2025-12-11 11:48:46.671172"
+        }
+      ]
+    },
+    {
+      "test_name": "DevTools Startups",
+      "query": "DevTools startups with 20-100 employees",
+      "parse_success": true,
+      "search_success": true,
+      "validation_success": true,
+      "companies_found": 0,
+      "elapsed_time": 22.41369128227234,
+      "companies": []
+    },
+    {
+      "test_name": "Growth Stage Companies",
+      "query": "Growth stage companies with over $50M funding",
+      "parse_success": true,
+      "search_success": true,
+      "validation_success": false,
+      "companies_found": 1,
+      "elapsed_time": 21.699639797210693,
+      "companies": [
+        {
+          "id": 574118,
+          "name": "Anthropic",
+          "domain": "anthropic.com",
+          "yc_batch": "",
+          "source": "scanned",
+          "messaging_score": 47.5,
+          "motion_score": 62.0,
+          "market_score": 33.0,
+          "stall_probability": "medium",
+          "signals": {
+            "messaging": {
+              "messaging_score": 47.5,
+              "h1_volatility": 0,
+              "positioning_consistency": 0.0,
+              "jargon_density": 0.03125,
+              "wayback_snapshots": 100
+            },
+            "motion": {
+              "motion_score": 62.0,
+              "traffic_score": 50.0,
+              "hiring_status": "active",
+              "sales_to_eng_ratio": 0.6666666666666666
+            },
+            "market": {
+              "market_score": 33.0,
+              "sentiment_score": 50.0,
+              "reddit_mentions": 0,
+              "github_stars": 0,
+              "last_commit_days": 999
+            }
+          },
+          "funding_amount": 200.0,
+          "funding_currency": null,
+          "employee_count": 500,
+          "last_raise_date": null,
+          "last_raise_stage": null,
+          "fund_tier": null,
+          "focus_areas": [
+            "B2B SaaS"
+          ],
+          "created_at": "2025-12-10 17:18:20.220792",
+          "updated_at": "2025-12-11 11:48:45.702198"
+        }
+      ]
+    },
+    {
+      "test_name": "Tier 1 VC Backed Companies",
+      "query": "Companies backed by Tier 1 VCs with Series A funding",
+      "parse_success": true,
+      "search_success": true,
+      "validation_success": true,
+      "companies_found": 0,
+      "elapsed_time": 22.027038097381592,
+      "companies": []
+    },
+    {
+      "test_name": "Recent Raises (6-12 months)",
+      "query": "Companies that raised 6-12 months ago",
+      "parse_success": true,
+      "search_success": true,
+      "validation_success": true,
+      "companies_found": 0,
+      "elapsed_time": 21.757622718811035,
+      "companies": []
+    },
+    {
+      "test_name": "Small Team B2B SaaS",
+      "query": "B2B SaaS companies with 5-20 employees",
+      "parse_success": true,
+      "search_success": false,
+      "validation_success": true,
+      "companies_found": 0,
+      "elapsed_time": 21.979055166244507,
+      "companies": []
+    },
+    {
+      "test_name": "AI Companies General",
+      "query": "AI companies with Series A funding",
+      "parse_success": true,
+      "search_success": true,
+      "validation_success": true,
+      "companies_found": 2,
+      "elapsed_time": 22.904829263687134,
+      "companies": [
+        {
+          "id": 71374,
+          "name": "Langdb",
+          "domain": "langdb.ai",
+          "yc_batch": "",
+          "source": "scanned",
+          "messaging_score": 29.229999542236328,
+          "motion_score": 66.0,
+          "market_score": 53.0,
+          "stall_probability": "medium",
+          "signals": {
+            "messaging": {
+              "messaging_score": 29.23076923076923,
+              "h1_volatility": 0,
+              "positioning_consistency": 0.0,
+              "jargon_density": 0.07692307692307693
+            },
+            "motion": {
+              "motion_score": 66.0,
+              "traffic_score": 60.0,
+              "hiring_status": "active",
+              "sales_to_eng_ratio": 1.0
+            },
+            "market": {
+              "market_score": 53.0,
+              "sentiment_score": 60,
+              "reddit_mentions": 5,
+              "github_stars": 100,
+              "last_commit_days": 30
+            }
+          },
+          "funding_amount": 3.0,
+          "funding_currency": null,
+          "employee_count": null,
+          "last_raise_date": null,
+          "last_raise_stage": null,
+          "fund_tier": null,
+          "focus_areas": [
+            "AI/ML"
+          ],
+          "created_at": "2025-12-10 14:18:14.275512",
+          "updated_at": "2025-12-11 11:48:48.161115"
+        },
+        {
+          "id": 598270,
+          "name": "Openai",
+          "domain": "openai.com",
+          "yc_batch": "",
+          "source": "scanned",
+          "messaging_score": 50.0,
+          "motion_score": 56.0,
+          "market_score": 71.0,
+          "stall_probability": "medium",
+          "signals": {
+            "messaging": {
+              "messaging_score": 50.0,
+              "h1_volatility": 0,
+              "positioning_consistency": 50.0,
+              "jargon_density": 0.05
+            },
+            "motion": {
+              "motion_score": 56.0,
+              "traffic_score": 55.0,
+              "hiring_status": "unknown",
+              "sales_to_eng_ratio": 1.0
+            },
+            "market": {
+              "market_score": 71.0,
+              "sentiment_score": 50.0,
+              "reddit_mentions": 0,
+              "github_stars": 291077,
+              "last_commit_days": 0
+            }
+          },
+          "funding_amount": null,
+          "funding_currency": null,
+          "employee_count": null,
+          "last_raise_date": null,
+          "last_raise_stage": null,
+          "fund_tier": null,
+          "focus_areas": [
+            "AI/ML"
+          ],
+          "created_at": "2025-12-10 17:20:39.927369",
+          "updated_at": "2025-12-11 11:48:40.988811"
+        }
+      ]
+    },
+    {
+      "test_name": "Invalid Query Test",
+      "query": "how big are my feet?",
+      "parse_success": true,
+      "search_success": true,
+      "validation_success": true,
+      "companies_found": 0,
+      "elapsed_time": 11.16691780090332,
+      "companies": []
+    }
+  ]
+}

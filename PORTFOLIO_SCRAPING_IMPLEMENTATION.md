@@ -165,3 +165,6 @@ UI: Displays companies in search results
 - ⏳ Testing pending (requires Playwright installation)
 - ⏳ UI display verification pending
 
+
+
+

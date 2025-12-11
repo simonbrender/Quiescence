@@ -154,3 +154,6 @@ Portfolio Websites (YC, Antler)
 - The monitor can be minimized but scraping continues
 - Multiple scraping sessions can run concurrently
 
+
+
+

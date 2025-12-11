@@ -35,7 +35,68 @@ function AdvancedSearch({ onCompanySelect, onSearchComplete, initialResults = nu
   const currentQueryRef = useRef(null)
   const currentSessionIdRef = useRef(null)
 
-  // Function to poll for new companies
+  // WebSocket connection for real-time company updates
+  const wsRef = useRef(null)
+  
+  // Function to connect to WebSocket for real-time updates
+  const connectWebSocket = (sessionId) => {
+    if (wsRef.current) {
+      wsRef.current.close()
+    }
+    
+    const ws = new WebSocket(`ws://localhost:8000/api/ws/portfolio-scraping/${sessionId}`)
+    wsRef.current = ws
+    
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data)
+      console.log('[AdvancedSearch] WebSocket event:', data.type)
+      
+      // Handle companies_added event - add new companies to results
+      if (data.type === 'companies_added' && data.companies) {
+        const newCompanies = Array.isArray(data.companies) ? data.companies : []
+        console.log(`[AdvancedSearch] Received ${newCompanies.length} new companies via WebSocket`)
+        
+        // Add new companies to existing results
+        setResults(prev => {
+          const existingDomains = new Set(prev.map(c => c.domain?.toLowerCase()))
+          const uniqueNew = newCompanies.filter(c => {
+            const domain = c.domain?.toLowerCase()
+            return domain && !existingDomains.has(domain)
+          })
+          
+          if (uniqueNew.length > 0) {
+            console.log(`[AdvancedSearch] Adding ${uniqueNew.length} unique companies to results`)
+            const updated = [...prev, ...uniqueNew]
+            setShowResults(true)
+            
+            // Update search complete callback
+            if (onSearchComplete) {
+              onSearchComplete(updated, currentQueryRef.current)
+            }
+            
+            return updated
+          }
+          return prev
+        })
+      }
+      
+      // Handle scraping complete
+      if (data.type === 'scraping_complete') {
+        console.log('[AdvancedSearch] Scraping completed')
+        stopPolling()
+      }
+    }
+    
+    ws.onerror = (error) => {
+      console.error('[AdvancedSearch] WebSocket error:', error)
+    }
+    
+    ws.onclose = () => {
+      console.log('[AdvancedSearch] WebSocket closed')
+    }
+  }
+  
+  // Function to poll for new companies (fallback if WebSocket fails)
   const startPollingForCompanies = async (query, sessionId) => {
     // Clear any existing polling
     if (pollingIntervalRef.current) {
@@ -47,9 +108,14 @@ function AdvancedSearch({ onCompanySelect, onSearchComplete, initialResults = nu
     lastCompanyCountRef.current = results.length
     setIsPolling(true)
     
+    // Connect to WebSocket for real-time updates
+    if (sessionId) {
+      connectWebSocket(sessionId)
+    }
+    
     console.log('[AdvancedSearch] Starting polling for companies...', { query, sessionId, currentCount: lastCompanyCountRef.current })
     
-    // Poll every 5 seconds for new companies
+    // Poll every 5 seconds for new companies (fallback)
     pollingIntervalRef.current = setInterval(async () => {
       try {
         console.log('[AdvancedSearch] Polling for new companies...', { query, sessionId })
@@ -82,12 +148,16 @@ function AdvancedSearch({ onCompanySelect, onSearchComplete, initialResults = nu
     }, 5000) // Poll every 5 seconds
   }
 
-  // Stop polling when component unmounts
+  // Stop polling and close WebSocket when component unmounts
   useEffect(() => {
     return () => {
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current)
         pollingIntervalRef.current = null
+      }
+      if (wsRef.current) {
+        wsRef.current.close()
+        wsRef.current = null
       }
     }
   }, [])
@@ -97,6 +167,10 @@ function AdvancedSearch({ onCompanySelect, onSearchComplete, initialResults = nu
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current)
       pollingIntervalRef.current = null
+    }
+    if (wsRef.current) {
+      wsRef.current.close()
+      wsRef.current = null
     }
     setIsPolling(false)
   }

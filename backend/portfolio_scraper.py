@@ -324,9 +324,12 @@ class PortfolioScraper:
                         else:
                             # Try multiple recent batches
                             print("Scraping multiple YC batches...")
-                            recent_batches = ['W24', 'S24', 'W23', 'S23', 'W22', 'S22']
+                            # ALL batches from 2005-2025
+                            all_batches = []
+                            for year in range(2005, 2025):
+                                all_batches.extend([f'W{str(year)[-2:]}', f'S{str(year)[-2:]}'])
                             all_companies = []
-                            for batch in recent_batches[:3]:  # Limit to 3 batches
+                            for batch in all_batches:  # NO LIMIT - scrape ALL batches
                                 try:
                                     batch_companies = await scrape_yc_batch(batch)
                                     all_companies.extend(batch_companies)
@@ -395,8 +398,8 @@ class PortfolioScraper:
             except:
                 pass
         
-        # Process company links
-        for link in company_links[:500]:  # Increased limit for YC
+        # Process company links - NO LIMIT for comprehensive scraping
+        for link in company_links:
             try:
                 href = link.get('href', '')
                 company_name = link.get_text(strip=True)
@@ -472,7 +475,8 @@ class PortfolioScraper:
                 continue
         
         # Process potential company elements
-        for elem in list(company_elements) + list(potential_companies)[:200]:
+        # NO LIMIT - comprehensive extraction
+        for elem in list(company_elements) + list(potential_companies):
             try:
                 company_name = None
                 if elem.get('data-company'):
@@ -523,7 +527,8 @@ class PortfolioScraper:
             all_text_elements = soup.find_all(['span', 'div', 'a', 'h3', 'h4'], 
                 string=re.compile(r'[A-Z][a-z]+'))
             
-            for elem in all_text_elements[:500]:  # Limit search
+            # NO LIMIT - comprehensive search
+            for elem in all_text_elements:
                 text = elem.get_text(strip=True)
                 if not text or len(text) < 3 or len(text) > 50:
                     continue
@@ -586,7 +591,8 @@ class PortfolioScraper:
         data_companies = soup.find_all(attrs={'data-company': True, 'data-name': True})
         
         # Process all potential company elements
-        all_elements = list(company_elements) + list(all_links)[:300] + list(company_headings) + list(data_companies)
+        # NO LIMIT - comprehensive extraction
+        all_elements = list(company_elements) + list(all_links) + list(company_headings) + list(data_companies)
         
         for elem in all_elements:
             try:
@@ -705,7 +711,8 @@ class PortfolioScraper:
             class_=re.compile(r'company|startup|name', re.I))
         
         # Process company elements
-        for elem in list(company_elements) + list(all_links)[:300]:
+        # NO LIMIT - comprehensive extraction
+        for elem in list(company_elements) + list(all_links):
             try:
                 company_name = None
                 domain = None
@@ -792,7 +799,8 @@ class PortfolioScraper:
                 continue
         
         # Process company headings
-        for heading in company_headings[:100]:
+        # NO LIMIT - comprehensive extraction
+        for heading in company_headings:
             try:
                 company_name = heading.get_text(strip=True)
                 if not company_name or len(company_name) < 2:
@@ -848,7 +856,8 @@ class PortfolioScraper:
         # Look for all external links (might be company websites)
         external_links = soup.find_all('a', href=re.compile(r'^https?://'))
         
-        all_elements = list(company_elements) + list(potential_links) + list(external_links)[:300]
+        # NO LIMIT - comprehensive extraction
+        all_elements = list(company_elements) + list(potential_links) + list(external_links)
         
         for elem in all_elements:
             company_name = None

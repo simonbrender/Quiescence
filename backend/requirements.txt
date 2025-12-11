@@ -12,4 +12,5 @@ crawl4ai>=0.3.0
 playwright>=1.40.0
 ollama>=0.1.0
 firecrawl-py>=0.0.16
+neo4j>=5.0.0
 

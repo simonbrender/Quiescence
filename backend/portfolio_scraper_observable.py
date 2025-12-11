@@ -76,7 +76,7 @@ class ObservablePortfolioScraper:
         max_companies: int = 10000,
         screenshot_interval: int = 10  # Take screenshot every N scrolls
     ) -> List[Dict]:
-        """Scrape YC portfolio with full observability"""
+        """Scrape YC portfolio with full observability - ensures browser cleanup"""
         companies = []
         seen_domains = set()
         seen_names = set()
@@ -97,89 +97,99 @@ class ObservablePortfolioScraper:
             })
             return []
         
+        browser = None
+        page = None
+        playwright = None
+        
         try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=False)  # Visible browser for observation
-                page = await browser.new_page()
+            playwright = await async_playwright().start()
+            browser = await playwright.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+            )
+            page = await browser.new_page()
+            
+            # Set a timeout for page operations
+            page.set_default_timeout(30000)
+            
+            await page.set_viewport_size({"width": 1920, "height": 1080})
+            
+            await self._emit_progress('navigate', {
+                'portfolio': portfolio_name,
+                'url': url
+            })
+            
+            await page.goto(url, wait_until="networkidle", timeout=60000)
+            await asyncio.sleep(2)
+            
+            # Initial screenshot
+            await self._take_screenshot(page, "initial_load", portfolio_name)
+            
+            previous_count = 0
+            no_change_count = 0
+            scroll_attempts = 0
+            max_scroll_attempts = 500
+            
+            await self._emit_progress('scrolling_start', {
+                'portfolio': portfolio_name
+            })
+            
+            while scroll_attempts < max_scroll_attempts and len(companies) < max_companies:
+                # Extract companies
+                page_companies = await self._extract_yc_companies_from_page(page, seen_domains, seen_names)
                 
-                await page.set_viewport_size({"width": 1920, "height": 1080})
+                for company in page_companies:
+                    domain = company.get('domain', '').lower().strip()
+                    name = company.get('name', '').lower().strip()
+                    
+                    if domain:
+                        seen_domains.add(domain)
+                    if name:
+                        seen_names.add(name)
+                    
+                    companies.append(company)
                 
-                await self._emit_progress('navigate', {
+                current_count = len(companies)
+                
+                # Progress update with batch of new companies
+                new_companies_batch = companies[previous_count:] if previous_count < len(companies) else []
+                await self._emit_progress('progress', {
                     'portfolio': portfolio_name,
-                    'url': url
+                    'companies_found': current_count,
+                    'scroll_attempt': scroll_attempts,
+                    'companies_on_page': len(page_companies),
+                    'new_companies': current_count - previous_count,
+                    'companies_batch': new_companies_batch[:10]  # Emit up to 10 companies per batch
                 })
                 
-                await page.goto(url, wait_until="networkidle", timeout=60000)
+                # Screenshot every N scrolls
+                if scroll_attempts % screenshot_interval == 0:
+                    await self._take_screenshot(page, f"scroll_{scroll_attempts}", portfolio_name)
+                
+                # Check if still finding new companies
+                if current_count == previous_count:
+                    no_change_count += 1
+                    if no_change_count >= 5:
+                        await self._emit_progress('scrolling_stop', {
+                            'portfolio': portfolio_name,
+                            'reason': 'no_new_companies',
+                            'companies_found': current_count
+                        })
+                        break
+                else:
+                    no_change_count = 0
+                
+                previous_count = current_count
+                
+                # Scroll
+                await page.evaluate("window.scrollBy(0, window.innerHeight)")
+                await asyncio.sleep(1)
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 await asyncio.sleep(2)
                 
-                # Initial screenshot
-                await self._take_screenshot(page, "initial_load", portfolio_name)
-                
-                previous_count = 0
-                no_change_count = 0
-                scroll_attempts = 0
-                max_scroll_attempts = 500
-                
-                await self._emit_progress('scrolling_start', {
-                    'portfolio': portfolio_name
-                })
-                
-                while scroll_attempts < max_scroll_attempts and len(companies) < max_companies:
-                    # Extract companies
-                    page_companies = await self._extract_yc_companies_from_page(page, seen_domains, seen_names)
-                    
-                    for company in page_companies:
-                        domain = company.get('domain', '').lower().strip()
-                        name = company.get('name', '').lower().strip()
-                        
-                        if domain:
-                            seen_domains.add(domain)
-                        if name:
-                            seen_names.add(name)
-                        
-                        companies.append(company)
-                    
-                    current_count = len(companies)
-                    
-                    # Progress update
-                    await self._emit_progress('progress', {
-                        'portfolio': portfolio_name,
-                        'companies_found': current_count,
-                        'scroll_attempt': scroll_attempts,
-                        'companies_on_page': len(page_companies),
-                        'new_companies': current_count - previous_count
-                    })
-                    
-                    # Screenshot every N scrolls
-                    if scroll_attempts % screenshot_interval == 0:
-                        await self._take_screenshot(page, f"scroll_{scroll_attempts}", portfolio_name)
-                    
-                    # Check if still finding new companies
-                    if current_count == previous_count:
-                        no_change_count += 1
-                        if no_change_count >= 5:
-                            await self._emit_progress('scrolling_stop', {
-                                'portfolio': portfolio_name,
-                                'reason': 'no_new_companies',
-                                'companies_found': current_count
-                            })
-                            break
-                    else:
-                        no_change_count = 0
-                    
-                    previous_count = current_count
-                    
-                    # Scroll
-                    await page.evaluate("window.scrollBy(0, window.innerHeight)")
-                    await asyncio.sleep(1)
-                    await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    await asyncio.sleep(2)
-                    
-                    scroll_attempts += 1
-                
-                await self._take_screenshot(page, "final", portfolio_name)
-                await browser.close()
-                
+                scroll_attempts += 1
+            
+            await self._take_screenshot(page, "final", portfolio_name)
         except Exception as e:
             await self._emit_progress('error', {
                 'portfolio': portfolio_name,
@@ -187,6 +197,29 @@ class ObservablePortfolioScraper:
             })
             import traceback
             traceback.print_exc()
+        finally:
+            # ALWAYS close browser resources, even on exception
+            # Close in reverse order: page -> browser -> playwright
+            if page:
+                try:
+                    await page.close()
+                    page = None
+                except Exception as e:
+                    print(f"[OBSERVABLE] Error closing page: {e}")
+            if browser:
+                try:
+                    await browser.close()
+                    browser = None
+                except Exception as e:
+                    print(f"[OBSERVABLE] Error closing browser: {e}")
+            if playwright:
+                try:
+                    await playwright.stop()
+                    playwright = None
+                except Exception as e:
+                    print(f"[OBSERVABLE] Error stopping playwright: {e}")
+            # Small delay to ensure cleanup completes
+            await asyncio.sleep(0.2)
         
         await self._emit_progress('complete', {
             'portfolio': portfolio_name,
@@ -221,114 +254,121 @@ class ObservablePortfolioScraper:
             })
             return []
         
+        browser = None
+        page = None
+        playwright = None
         try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=False)  # Visible browser
-                page = await browser.new_page()
+            playwright = await async_playwright().start()
+            browser = await playwright.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-setuid-sandbox']  # Additional args for stability
+            )
+            page = await browser.new_page()
+            
+            await page.set_viewport_size({"width": 1920, "height": 1080})
+            
+            await self._emit_progress('navigate', {
+                'portfolio': portfolio_name,
+                'url': url
+            })
+            
+            await page.goto(url, wait_until="networkidle", timeout=60000)
+            await asyncio.sleep(3)
+            
+            # Initial screenshot
+            await self._take_screenshot(page, "initial_load", portfolio_name)
+            
+            load_more_attempts = 0
+            max_load_more_attempts = 200
+            
+            await self._emit_progress('load_more_start', {
+                'portfolio': portfolio_name
+            })
+            
+            while load_more_attempts < max_load_more_attempts and len(companies) < max_companies:
+                # Extract companies
+                page_companies = await self._extract_antler_companies_from_page(page, seen_domains, seen_names)
                 
-                await page.set_viewport_size({"width": 1920, "height": 1080})
+                for company in page_companies:
+                    domain = company.get('domain', '').lower().strip()
+                    name = company.get('name', '').lower().strip()
+                    
+                    if domain:
+                        seen_domains.add(domain)
+                    if name:
+                        seen_names.add(name)
+                    
+                    companies.append(company)
                 
-                await self._emit_progress('navigate', {
+                current_count = len(companies)
+                
+                # Progress update with batch of new companies
+                previous_batch_count = len(companies) - len(page_companies)
+                new_companies_batch = companies[previous_batch_count:] if previous_batch_count >= 0 else page_companies
+                await self._emit_progress('progress', {
                     'portfolio': portfolio_name,
-                    'url': url
+                    'companies_found': current_count,
+                    'load_more_attempt': load_more_attempts,
+                    'companies_on_page': len(page_companies),
+                    'companies_batch': new_companies_batch[:10]  # Emit up to 10 companies per batch
                 })
                 
-                await page.goto(url, wait_until="networkidle", timeout=60000)
-                await asyncio.sleep(3)
+                # Screenshot every N clicks
+                if load_more_attempts % screenshot_interval == 0:
+                    await self._take_screenshot(page, f"load_more_{load_more_attempts}", portfolio_name)
                 
-                # Initial screenshot
-                await self._take_screenshot(page, "initial_load", portfolio_name)
+                # Try to click Load More
+                load_more_clicked = False
+                load_more_selectors = [
+                    'button:has-text("Load More")',
+                    'button:has-text("Load more")',
+                    'a:has-text("Load More")',
+                    '[class*="load-more"]'
+                ]
                 
-                load_more_attempts = 0
-                max_load_more_attempts = 200
+                for selector in load_more_selectors:
+                    try:
+                        button = await page.query_selector(selector)
+                        if button and await button.is_visible():
+                            await self._emit_progress('button_click', {
+                                'portfolio': portfolio_name,
+                                'selector': selector,
+                                'attempt': load_more_attempts
+                            })
+                            await button.click()
+                            await asyncio.sleep(2)
+                            load_more_clicked = True
+                            break
+                    except:
+                        continue
                 
-                await self._emit_progress('load_more_start', {
-                    'portfolio': portfolio_name
-                })
-                
-                while load_more_attempts < max_load_more_attempts and len(companies) < max_companies:
-                    # Extract companies
-                    page_companies = await self._extract_antler_companies_from_page(page, seen_domains, seen_names)
+                if not load_more_clicked:
+                    await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    await asyncio.sleep(2)
                     
-                    for company in page_companies:
-                        domain = company.get('domain', '').lower().strip()
-                        name = company.get('name', '').lower().strip()
-                        
-                        if domain:
-                            seen_domains.add(domain)
-                        if name:
-                            seen_names.add(name)
-                        
-                        companies.append(company)
-                    
-                    current_count = len(companies)
-                    
-                    # Progress update
-                    await self._emit_progress('progress', {
-                        'portfolio': portfolio_name,
-                        'companies_found': current_count,
-                        'load_more_attempt': load_more_attempts,
-                        'companies_on_page': len(page_companies)
-                    })
-                    
-                    # Screenshot every N clicks
-                    if load_more_attempts % screenshot_interval == 0:
-                        await self._take_screenshot(page, f"load_more_{load_more_attempts}", portfolio_name)
-                    
-                    # Try to click Load More
-                    load_more_clicked = False
-                    load_more_selectors = [
-                        'button:has-text("Load More")',
-                        'button:has-text("Load more")',
-                        'a:has-text("Load More")',
-                        '[class*="load-more"]'
-                    ]
-                    
+                    # Check again after scroll
                     for selector in load_more_selectors:
                         try:
                             button = await page.query_selector(selector)
                             if button and await button.is_visible():
-                                await self._emit_progress('button_click', {
-                                    'portfolio': portfolio_name,
-                                    'selector': selector,
-                                    'attempt': load_more_attempts
-                                })
                                 await button.click()
                                 await asyncio.sleep(2)
                                 load_more_clicked = True
                                 break
                         except:
                             continue
-                    
-                    if not load_more_clicked:
-                        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                        await asyncio.sleep(2)
-                        
-                        # Check again after scroll
-                        for selector in load_more_selectors:
-                            try:
-                                button = await page.query_selector(selector)
-                                if button and await button.is_visible():
-                                    await button.click()
-                                    await asyncio.sleep(2)
-                                    load_more_clicked = True
-                                    break
-                            except:
-                                continue
-                    
-                    if not load_more_clicked and len(page_companies) == 0:
-                        await self._emit_progress('load_more_stop', {
-                            'portfolio': portfolio_name,
-                            'reason': 'no_button_found',
-                            'companies_found': current_count
-                        })
-                        break
-                    
-                    load_more_attempts += 1
                 
-                await self._take_screenshot(page, "final", portfolio_name)
-                await browser.close()
+                if not load_more_clicked and len(page_companies) == 0:
+                    await self._emit_progress('load_more_stop', {
+                        'portfolio': portfolio_name,
+                        'reason': 'no_button_found',
+                        'companies_found': current_count
+                    })
+                    break
                 
+                load_more_attempts += 1
+            
+            await self._take_screenshot(page, "final", portfolio_name)
         except Exception as e:
             await self._emit_progress('error', {
                 'portfolio': portfolio_name,
@@ -336,6 +376,29 @@ class ObservablePortfolioScraper:
             })
             import traceback
             traceback.print_exc()
+        finally:
+            # ALWAYS close browser resources, even on exception
+            # Close in reverse order: page -> browser -> playwright
+            if page:
+                try:
+                    await page.close()
+                    page = None
+                except Exception as e:
+                    print(f"[OBSERVABLE] Error closing page: {e}")
+            if browser:
+                try:
+                    await browser.close()
+                    browser = None
+                except Exception as e:
+                    print(f"[OBSERVABLE] Error closing browser: {e}")
+            if playwright:
+                try:
+                    await playwright.stop()
+                    playwright = None
+                except Exception as e:
+                    print(f"[OBSERVABLE] Error stopping playwright: {e}")
+            # Small delay to ensure cleanup completes
+            await asyncio.sleep(0.2)
         
         await self._emit_progress('complete', {
             'portfolio': portfolio_name,
@@ -345,21 +408,71 @@ class ObservablePortfolioScraper:
         return companies
     
     async def _extract_yc_companies_from_page(self, page, seen_domains: Set[str], seen_names: Set[str]) -> List[Dict]:
-        """Extract companies from YC page"""
+        """Extract companies from YC page using JavaScript to handle React-rendered content"""
         companies = []
         try:
-            html = await page.content()
-            soup = BeautifulSoup(html, 'html.parser')
-            
-            company_links = soup.find_all('a', href=re.compile(r'/companies/[^/]+'))
-            
-            for link in company_links:
-                try:
-                    href = link.get('href', '')
-                    company_name = link.get_text(strip=True)
+            # Use JavaScript to extract companies since YC page is React-rendered
+            extracted = await page.evaluate('''() => {
+                const companies = [];
+                const links = Array.from(document.querySelectorAll("a[href*='/companies/']"));
+                const seen = new Set();
+                
+                for (let link of links) {
+                    const href = link.getAttribute('href') || link.href;
+                    const match = href.match(/\\/companies\\/([^/]+)/);
+                    if (!match) continue;
                     
-                    if not company_name or len(company_name) < 2:
-                        company_name = link.get('title', '') or link.get('aria-label', '')
+                    const slug = match[1];
+                    if (seen.has(slug)) continue;
+                    seen.add(slug);
+                    
+                    // Extract company name - try to get just the first word/text node
+                    let company_name = slug.replace(/-/g, ' ').replace(/\\b\\w/g, l => l.toUpperCase());
+                    
+                    // Try to find a better name from the link text
+                    const linkText = link.textContent.trim();
+                    // Company name is usually the first part before location/description
+                    const nameMatch = linkText.match(/^([A-Z][a-zA-Z0-9\\s&]+?)(?:[A-Z]{2,}|San Francisco|Bengaluru|Palo Alto|Berkeley|New York|London|Tel Aviv)/);
+                    if (nameMatch && nameMatch[1].length > 2 && nameMatch[1].length < 50) {
+                        company_name = nameMatch[1].trim();
+                    } else {
+                        // Fallback: take first reasonable word sequence
+                        const words = linkText.split(/[A-Z]{2,}|San Francisco|Bengaluru/)[0].trim();
+                        if (words.length > 2 && words.length < 50) {
+                            company_name = words;
+                        }
+                    }
+                    
+                    // Try to find domain from the card/parent element
+                    let domain = null;
+                    const card = link.closest('div, article, li, section');
+                    if (card) {
+                        const websiteLink = card.querySelector('a[href^="http"]:not([href*="ycombinator"]):not([href*="twitter"]):not([href*="linkedin"]):not([href*="facebook"]):not([href*="startupschool"])');
+                        if (websiteLink) {
+                            try {
+                                const url = new URL(websiteLink.href);
+                                domain = url.hostname.replace('www.', '');
+                            } catch(e) {}
+                        }
+                    }
+                    
+                    companies.push({
+                        name: company_name,
+                        slug: slug,
+                        domain: domain,
+                        url: href.startsWith('http') ? href : `https://www.ycombinator.com${href}`
+                    });
+                }
+                return companies;
+            }''')
+            
+            # Process extracted companies
+            for item in extracted:
+                try:
+                    company_name = item.get('name', '').strip()
+                    slug = item.get('slug', '')
+                    domain = item.get('domain')
+                    company_url = item.get('url', '')
                     
                     if not company_name or len(company_name) < 2:
                         continue
@@ -368,37 +481,65 @@ class ObservablePortfolioScraper:
                     if name_key in seen_names:
                         continue
                     
-                    domain = None
-                    parent = link.find_parent(['div', 'article', 'li', 'section'])
-                    if parent:
-                        website_links = parent.find_all('a', href=re.compile(r'^https?://'))
-                        for wlink in website_links:
-                            href_text = wlink.get('href', '')
-                            if href_text and not any(x in href_text.lower() for x in ['ycombinator.com', 'twitter.com', 'linkedin.com']):
-                                parsed = urlparse(href_text)
-                                domain = parsed.netloc.replace('www.', '')
-                                if domain:
-                                    break
+                    # If no domain found, try to get it from the company detail page
+                    if not domain and company_url:
+                        try:
+                            # Navigate to company page to get domain
+                            detail_page = await page.context.new_page()
+                            await detail_page.goto(company_url, wait_until='networkidle', timeout=15000)
+                            await asyncio.sleep(1)  # Brief wait for React
+                            
+                            domain_result = await detail_page.evaluate('''() => {
+                                const websiteLink = document.querySelector('a[href^="http"]:not([href*="ycombinator"]):not([href*="twitter"]):not([href*="linkedin"]):not([href*="facebook"]):not([href*="startupschool"])');
+                                if (websiteLink) {
+                                    try {
+                                        const url = new URL(websiteLink.href);
+                                        return url.hostname.replace('www.', '');
+                                    } catch(e) {}
+                                }
+                                return null;
+                            }''')
+                            
+                            if domain_result:
+                                domain = domain_result
+                            
+                            await detail_page.close()
+                        except Exception as e:
+                            print(f"[OBSERVABLE] Error fetching domain for {company_name}: {e}")
                     
+                    # If still no domain, derive from slug (better than generating fake domain)
                     if not domain:
-                        domain = await self._discover_domain_from_name(company_name)
+                        # Try common domain patterns
+                        domain_candidates = [
+                            f"{slug}.com",
+                            f"{slug}.io",
+                            f"{slug}.ai",
+                            f"{slug}.co"
+                        ]
+                        # Don't auto-generate, leave empty - we'll skip companies without domains
+                        domain = None
                     
-                    companies.append({
-                        'name': company_name.strip(),
-                        'domain': domain or '',
-                        'source': 'yc',
-                        'yc_batch': '',
-                        'focus_areas': [],
-                        'portfolio_url': 'https://www.ycombinator.com/companies'
-                    })
-                    
-                    seen_names.add(name_key)
+                    # Only add if we have a domain or if it's a well-known company
                     if domain:
+                        companies.append({
+                            'name': company_name,
+                            'domain': domain,
+                            'source': 'yc',
+                            'yc_batch': '',  # Could extract from page if needed
+                            'focus_areas': [],
+                            'portfolio_url': 'https://www.ycombinator.com/companies'
+                        })
+                        
+                        seen_names.add(name_key)
                         seen_domains.add(domain.lower())
-                except:
+                except Exception as e:
+                    print(f"[OBSERVABLE] Error processing company {item.get('name', 'unknown')}: {e}")
                     continue
+                    
         except Exception as e:
             print(f"[OBSERVABLE] Error extracting YC companies: {e}")
+            import traceback
+            traceback.print_exc()
         
         return companies
     
@@ -472,32 +613,53 @@ class ObservablePortfolioScraper:
         return f"{no_spaces}.com" if no_spaces else None
     
     async def scrape_both_observable(self) -> Dict[str, List[Dict]]:
-        """Scrape both portfolios with observability"""
+        """Scrape both portfolios with observability - ensures proper browser cleanup"""
         await self._emit_progress('start_both', {
             'portfolios': ['YC', 'Antler']
         })
         
-        yc_task = self.scrape_yc_portfolio_observable()
-        antler_task = self.scrape_antler_portfolio_observable()
+        yc_companies = []
+        antler_companies = []
         
-        yc_companies, antler_companies = await asyncio.gather(
-            yc_task,
-            antler_task,
-            return_exceptions=True
-        )
-        
-        if isinstance(yc_companies, Exception):
+        # Run scrapers sequentially to avoid browser leaks and ensure proper cleanup
+        # Each scraper manages its own playwright instance and browser
+        try:
+            yc_companies = await self.scrape_yc_portfolio_observable()
+        except Exception as e:
+            print(f"[OBSERVABLE] Error scraping YC portfolio: {e}")
+            import traceback
+            traceback.print_exc()
+            await self._emit_progress('error', {
+                'portfolio': 'YC',
+                'error': str(e)
+            })
             yc_companies = []
-        if isinstance(antler_companies, Exception):
+        
+        # Ensure YC browser is closed before starting Antler
+        await asyncio.sleep(0.5)  # Small delay to ensure cleanup completes
+        
+        try:
+            antler_companies = await self.scrape_antler_portfolio_observable()
+        except Exception as e:
+            print(f"[OBSERVABLE] Error scraping Antler portfolio: {e}")
+            import traceback
+            traceback.print_exc()
+            await self._emit_progress('error', {
+                'portfolio': 'Antler',
+                'error': str(e)
+            })
             antler_companies = []
         
         await self._emit_progress('complete_both', {
-            'yc_count': len(yc_companies) if isinstance(yc_companies, list) else 0,
-            'antler_count': len(antler_companies) if isinstance(antler_companies, list) else 0
+            'yc_count': len(yc_companies),
+            'antler_count': len(antler_companies)
         })
         
         return {
-            'yc': yc_companies if isinstance(yc_companies, list) else [],
-            'antler': antler_companies if isinstance(antler_companies, list) else []
+            'yc': yc_companies,
+            'antler': antler_companies
         }
+
+
+
 

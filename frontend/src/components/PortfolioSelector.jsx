@@ -61,8 +61,12 @@ function PortfolioSelector({ onScrapeComplete }) {
       
       setPortfolios(filtered)
     } catch (err) {
-      setError('Failed to load portfolios')
-      console.error(err)
+      if (err.response?.status === 404 || err.code === 'ECONNREFUSED' || err.message?.includes('refused')) {
+        setError('Backend server is not running. Please start the backend server (python backend/main.py)')
+      } else {
+        setError(`Failed to load portfolios: ${err.message || 'Unknown error'}`)
+      }
+      console.error('Portfolio loading error:', err)
     } finally {
       setLoading(false)
     }
@@ -76,7 +80,34 @@ function PortfolioSelector({ onScrapeComplete }) {
       await loadPortfolios()
       alert(`Discovered ${result.discovered} VCs, added ${result.added} new ones`)
     } catch (err) {
-      setError(err.message || 'Failed to discover VCs')
+      console.error('VC discovery error:', err)
+      console.error('Error details:', {
+        message: err.message,
+        code: err.code,
+        response: err.response?.data,
+        status: err.response?.status
+      })
+      
+      // Extract error message
+      let errorMessage = 'Failed to discover VCs'
+      if (err.message) {
+        errorMessage = err.message
+      } else if (err.response?.data?.detail) {
+        errorMessage = err.response.data.detail
+      } else if (err.response?.statusText) {
+        errorMessage = `Discovery failed: ${err.response.statusText}`
+      }
+      
+      setError(errorMessage)
+      
+      // Show more detailed error in console for debugging
+      if (err.code === 'ECONNREFUSED' || err.message?.includes('refused')) {
+        console.error('Backend server is not running. Start it with: python backend/main.py')
+      } else if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        console.error('Discovery request timed out. This operation can take several minutes.')
+      } else if (err.message === 'Network Error') {
+        console.error('Network error detected. Check if backend is running.')
+      }
     } finally {
       setDiscovering(false)
     }

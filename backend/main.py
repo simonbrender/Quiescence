@@ -20,6 +20,12 @@ from scorer import calculate_scores, scan_company
 from seeds import load_mock_data
 from portfolio_scraper import PortfolioScraper
 from vc_discovery import VCDiscovery
+
+# Global lock to prevent concurrent portfolio scraping
+# Note: asyncio.Lock() must be created in async context, so we use a threading lock for checking
+_portfolio_scraping_active = threading.Lock()
+_active_scraping_tasks = set()
+_scraping_in_progress = False
 try:
     from data_enrichment import enrich_company_data
 except ImportError:
@@ -182,6 +188,64 @@ conn.execute("""
         updated_at TIMESTAMP
     )
 """)
+
+# Investor-Company relationship tables
+conn.execute("""
+    CREATE TABLE IF NOT EXISTS company_investments (
+        id INTEGER PRIMARY KEY,
+        company_id INTEGER NOT NULL,
+        investor_id INTEGER NOT NULL,
+        investment_type TEXT,
+        funding_round TEXT,
+        funding_amount REAL,
+        funding_currency TEXT DEFAULT 'USD',
+        investment_date DATE,
+        valid_from DATE DEFAULT CURRENT_DATE,
+        valid_to DATE,
+        ownership_percentage REAL,
+        lead_investor BOOLEAN DEFAULT FALSE,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+""")
+
+conn.execute("""
+    CREATE TABLE IF NOT EXISTS funding_rounds (
+        id INTEGER PRIMARY KEY,
+        company_id INTEGER NOT NULL,
+        round_name TEXT,
+        round_date DATE,
+        amount REAL,
+        currency TEXT DEFAULT 'USD',
+        valuation REAL,
+        lead_investor_id INTEGER,
+        investor_count INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+""")
+
+conn.execute("""
+    CREATE TABLE IF NOT EXISTS funding_round_investors (
+        id INTEGER PRIMARY KEY,
+        funding_round_id INTEGER NOT NULL,
+        investor_id INTEGER NOT NULL,
+        amount REAL,
+        lead_investor BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+""")
+
+# Create indexes for performance
+try:
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_company_investments_company ON company_investments(company_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_company_investments_investor ON company_investments(investor_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_company_investments_validity ON company_investments(valid_from, valid_to)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_funding_rounds_company ON funding_rounds(company_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_funding_rounds_date ON funding_rounds(round_date)")
+except Exception as e:
+    # Indexes might already exist, continue
+    print(f"Note: Some indexes may already exist: {e}")
 
 def load_initial_vcs():
     """Load initial VCs from seed_data.json"""
@@ -411,110 +475,127 @@ async def get_companies(
     source: Optional[str] = None,
     min_score: Optional[float] = None,
     vector: Optional[str] = None,
-    exclude_mock: Optional[bool] = False
+    exclude_mock: Optional[bool] = False,
+    limit: Optional[int] = None
 ):
     """Get all companies with optional filters"""
-    # #region agent log
-    debug_log("main.py:278", "get_companies entry", {"thread_id": threading.current_thread().ident, "params": {"yc_batch": yc_batch, "source": source}}, "A")
-    # #endregion
-    query = "SELECT * FROM companies WHERE 1=1"
-    params = []
-    
-    if yc_batch:
-        query += " AND yc_batch = ?"
-        params.append(yc_batch)
-    
-    if source:
-        query += " AND source = ?"
-        params.append(source)
-    
-    if exclude_mock:
-        # Exclude mock data - mock companies have source='yc', 'antler', 'github', or 'mock'
-        # Only show companies that were actually scanned (source='scanned')
-        query += " AND source = 'scanned'"
-    
-    query += " ORDER BY (messaging_score + motion_score + market_score) / 3 DESC"
-    
-    # #region agent log
-    debug_log("main.py:305", "Before conn.execute", {"thread_id": threading.current_thread().ident, "query": query[:100]}, "A")
     try:
-    # #endregion
-        results = conn.execute(query, params).fetchall()
-    # #region agent log
-    except Exception as db_err:
-        debug_log("main.py:305", "conn.execute error", {"thread_id": threading.current_thread().ident, "error": str(db_err), "error_type": type(db_err).__name__}, "A")
+        # #region agent log
+        debug_log("main.py:278", "get_companies entry", {"thread_id": threading.current_thread().ident, "params": {"yc_batch": yc_batch, "source": source}}, "A")
+        # #endregion
+        query = "SELECT * FROM companies WHERE 1=1"
+        params = []
+        
+        if yc_batch:
+            query += " AND yc_batch = ?"
+            params.append(yc_batch)
+        
+        if source:
+            query += " AND source = ?"
+            params.append(source)
+        
+        if exclude_mock:
+            # Exclude mock/test data - only exclude companies with source='mock' or test domains
+            # Allow real portfolio companies (yc, antler, github, scanned, etc.)
+            query += " AND source != 'mock' AND domain NOT LIKE 'test%' AND domain NOT LIKE '%.test'"
+        
+        # Order by average score, handling NULL scores (treat as 0 for ordering)
+        # Use COALESCE to handle NULL values in ORDER BY
+        query += " ORDER BY COALESCE((messaging_score + motion_score + market_score) / 3, 0) DESC, id ASC"
+        
+        if limit:
+            query += f" LIMIT {limit}"
+        
+        # #region agent log
+        debug_log("main.py:305", "Before conn.execute", {"thread_id": threading.current_thread().ident, "query": query[:100]}, "A")
+        # #endregion
+        try:
+            results = conn.execute(query, params).fetchall()
+            columns = [desc[0] for desc in conn.description]
+        except Exception as db_err:
+            debug_log("main.py:305", "conn.execute error", {"thread_id": threading.current_thread().ident, "error": str(db_err), "error_type": type(db_err).__name__}, "A")
+            raise HTTPException(status_code=500, detail=f"Database query error: {str(db_err)}")
+        
+        debug_log("main.py:305", "After conn.execute", {"thread_id": threading.current_thread().ident, "result_count": len(results)}, "A")
+        # #endregion
+        
+        companies = []
+        for row in results:
+            try:
+                company_dict = dict(zip(columns, row))
+                # Parse JSON signals
+                # #region agent log
+                signals_raw = company_dict.get('signals')
+                debug_log("main.py:312", "Before JSON parse signals", {"thread_id": threading.current_thread().ident, "signals_type": type(signals_raw).__name__, "is_empty_str": signals_raw == ""}, "D")
+                # #endregion
+                if isinstance(company_dict.get('signals'), str):
+                    try:
+                        company_dict['signals'] = json.loads(company_dict['signals'])
+                    # #region agent log
+                    except Exception as json_err:
+                        debug_log("main.py:313", "JSON parse signals error", {"thread_id": threading.current_thread().ident, "error": str(json_err), "signals_value": str(signals_raw)[:100]}, "D")
+                        company_dict['signals'] = {}
+                    # #endregion
+                
+                # Filter by vector if specified
+                if vector:
+                    if vector == "messaging" and company_dict['messaging_score'] < (min_score or 50):
+                        continue
+                    elif vector == "motion" and company_dict['motion_score'] < (min_score or 50):
+                        continue
+                    elif vector == "market" and company_dict['market_score'] < (min_score or 50):
+                        continue
+                
+                # Parse focus areas
+                if isinstance(company_dict.get('focus_areas'), str):
+                    try:
+                        company_dict['focus_areas'] = json.loads(company_dict['focus_areas'])
+                    except:
+                        company_dict['focus_areas'] = []
+                
+                # Format timestamps
+                if company_dict.get('created_at'):
+                    company_dict['created_at'] = str(company_dict['created_at'])
+                if company_dict.get('updated_at'):
+                    company_dict['updated_at'] = str(company_dict['updated_at'])
+                
+                # Format dates
+                # #region agent log
+                debug_log("main.py:338", "Before date conversion", {"thread_id": threading.current_thread().ident, "last_raise_date": str(company_dict.get('last_raise_date')), "is_none": company_dict.get('last_raise_date') is None}, "C")
+                # #endregion
+                if company_dict.get('last_raise_date'):
+                    try:
+                        company_dict['last_raise_date'] = str(company_dict['last_raise_date'])
+                    # #region agent log
+                    except Exception as date_err:
+                        debug_log("main.py:339", "Date conversion error", {"thread_id": threading.current_thread().ident, "error": str(date_err), "value": str(company_dict.get('last_raise_date'))}, "C")
+                        company_dict['last_raise_date'] = None
+                    # #endregion
+                
+                # Convert funding to millions for display
+                if company_dict.get('funding_amount'):
+                    company_dict['funding_amount'] = company_dict['funding_amount'] / 1000000
+                
+                # Ensure scores are not None (default to 0.0 for Pydantic validation)
+                if company_dict.get('messaging_score') is None:
+                    company_dict['messaging_score'] = 0.0
+                if company_dict.get('motion_score') is None:
+                    company_dict['motion_score'] = 0.0
+                if company_dict.get('market_score') is None:
+                    company_dict['market_score'] = 0.0
+                
+                companies.append(CompanyResponse(**company_dict))
+            except Exception as e:
+                debug_log("main.py:515", "Error processing company row", {"thread_id": threading.current_thread().ident, "error": str(e), "error_type": type(e).__name__}, "B")
+                # Skip this company and continue with the next one
+                continue
+        
+        return companies
+    except HTTPException:
         raise
-    debug_log("main.py:305", "After conn.execute", {"thread_id": threading.current_thread().ident, "result_count": len(results)}, "A")
-    # #endregion
-    columns = [desc[0] for desc in conn.description]
-    
-    companies = []
-    for row in results:
-        company_dict = dict(zip(columns, row))
-        # Parse JSON signals
-        # #region agent log
-        signals_raw = company_dict.get('signals')
-        debug_log("main.py:312", "Before JSON parse signals", {"thread_id": threading.current_thread().ident, "signals_type": type(signals_raw).__name__, "is_empty_str": signals_raw == ""}, "D")
-        # #endregion
-        if isinstance(company_dict.get('signals'), str):
-            try:
-                company_dict['signals'] = json.loads(company_dict['signals'])
-            # #region agent log
-            except Exception as json_err:
-                debug_log("main.py:313", "JSON parse signals error", {"thread_id": threading.current_thread().ident, "error": str(json_err), "signals_value": str(signals_raw)[:100]}, "D")
-                company_dict['signals'] = {}
-            # #endregion
-        
-        # Filter by vector if specified
-        if vector:
-            if vector == "messaging" and company_dict['messaging_score'] < (min_score or 50):
-                continue
-            elif vector == "motion" and company_dict['motion_score'] < (min_score or 50):
-                continue
-            elif vector == "market" and company_dict['market_score'] < (min_score or 50):
-                continue
-        
-        # Parse focus areas
-        if isinstance(company_dict.get('focus_areas'), str):
-            try:
-                company_dict['focus_areas'] = json.loads(company_dict['focus_areas'])
-            except:
-                company_dict['focus_areas'] = []
-        
-        # Format timestamps
-        if company_dict.get('created_at'):
-            company_dict['created_at'] = str(company_dict['created_at'])
-        if company_dict.get('updated_at'):
-            company_dict['updated_at'] = str(company_dict['updated_at'])
-        
-        # Format dates
-        # #region agent log
-        debug_log("main.py:338", "Before date conversion", {"thread_id": threading.current_thread().ident, "last_raise_date": str(company_dict.get('last_raise_date')), "is_none": company_dict.get('last_raise_date') is None}, "C")
-        # #endregion
-        if company_dict.get('last_raise_date'):
-            try:
-                company_dict['last_raise_date'] = str(company_dict['last_raise_date'])
-            # #region agent log
-            except Exception as date_err:
-                debug_log("main.py:339", "Date conversion error", {"thread_id": threading.current_thread().ident, "error": str(date_err), "value": str(company_dict.get('last_raise_date'))}, "C")
-                company_dict['last_raise_date'] = None
-            # #endregion
-        
-        # Convert funding to millions for display
-        if company_dict.get('funding_amount'):
-            company_dict['funding_amount'] = company_dict['funding_amount'] / 1000000
-        
-        # Ensure scores are not None (default to 0.0 for Pydantic validation)
-        if company_dict.get('messaging_score') is None:
-            company_dict['messaging_score'] = 0.0
-        if company_dict.get('motion_score') is None:
-            company_dict['motion_score'] = 0.0
-        if company_dict.get('market_score') is None:
-            company_dict['market_score'] = 0.0
-        
-        companies.append(CompanyResponse(**company_dict))
-    
-    return companies
+    except Exception as e:
+        debug_log("main.py:517", "get_companies exception", {"thread_id": threading.current_thread().ident, "error": str(e), "error_type": type(e).__name__}, "B")
+        raise HTTPException(status_code=500, detail=f"Error fetching companies: {str(e)}")
 
 class AdvancedSearchRequest(BaseModel):
     stages: Optional[List[str]] = None  # e.g., ["Seed", "Series A"]
@@ -535,9 +616,6 @@ class FreeTextSearchRequest(BaseModel):
 
 @app.post("/companies/search", response_model=List[CompanyResponse])
 async def advanced_search(request: AdvancedSearchRequest):
-    # #region agent log
-    debug_log("main.py:365", "advanced_search entry", {"thread_id": threading.current_thread().ident, "has_free_text": bool(request.free_text_query)}, "A")
-    # #endregion
     """
     Advanced search for companies matching specific criteria:
     - Stage (Seed/Series A)
@@ -549,216 +627,221 @@ async def advanced_search(request: AdvancedSearchRequest):
     - Ranked by stall indicators
     - Free text natural language query (parsed using Ollama)
     """
-    # If free_text_query is provided, parse it first
-    if request.free_text_query:
-        try:
-            from nlp_query_parser import parse_natural_language_query
-            parsed = parse_natural_language_query(request.free_text_query)
-            
-            # Merge parsed params with explicit params (explicit takes precedence)
-            if parsed.get('stages') and not request.stages:
-                request.stages = parsed['stages']
-            if parsed.get('focus_areas') and not request.focus_areas:
-                request.focus_areas = parsed['focus_areas']
-            if parsed.get('funding_min') is not None and request.funding_min is None:
-                request.funding_min = parsed['funding_min']
-            if parsed.get('funding_max') is not None and request.funding_max is None:
-                request.funding_max = parsed['funding_max']
-            if parsed.get('employees_min') is not None and request.employees_min is None:
-                request.employees_min = parsed['employees_min']
-            if parsed.get('employees_max') is not None and request.employees_max is None:
-                request.employees_max = parsed['employees_max']
-            if parsed.get('months_post_raise_min') is not None and request.months_post_raise_min is None:
-                request.months_post_raise_min = parsed['months_post_raise_min']
-            if parsed.get('months_post_raise_max') is not None and request.months_post_raise_max is None:
-                request.months_post_raise_max = parsed['months_post_raise_max']
-            if parsed.get('fund_tiers') and not request.fund_tiers:
-                request.fund_tiers = parsed['fund_tiers']
-            if 'rank_by_stall' in parsed:
-                request.rank_by_stall = parsed['rank_by_stall']
-        except Exception as e:
-            print(f"Error parsing free text query: {e}")
-    
-    query = "SELECT * FROM companies WHERE 1=1"
-    params = []
-    filters_applied = False  # Track if any filters were applied
-    
-    # Ensure required columns exist before building query
-    for col_name, col_type in required_columns:
-        if not column_exists('companies', col_name):
+    try:
+        # #region agent log
+        debug_log("main.py:365", "advanced_search entry", {"thread_id": threading.current_thread().ident, "has_free_text": bool(request.free_text_query)}, "A")
+        # #endregion
+        # If free_text_query is provided, parse it first
+        if request.free_text_query:
             try:
-                conn.execute(f"ALTER TABLE companies ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
-                conn.commit()
+                from nlp_query_parser import parse_natural_language_query
+                parsed = parse_natural_language_query(request.free_text_query)
+                
+                # Merge parsed params with explicit params (explicit takes precedence)
+                if parsed.get('stages') and not request.stages:
+                    request.stages = parsed['stages']
+                if parsed.get('focus_areas') and not request.focus_areas:
+                    request.focus_areas = parsed['focus_areas']
+                if parsed.get('funding_min') is not None and request.funding_min is None:
+                    request.funding_min = parsed['funding_min']
+                if parsed.get('funding_max') is not None and request.funding_max is None:
+                    request.funding_max = parsed['funding_max']
+                if parsed.get('employees_min') is not None and request.employees_min is None:
+                    request.employees_min = parsed['employees_min']
+                if parsed.get('employees_max') is not None and request.employees_max is None:
+                    request.employees_max = parsed['employees_max']
+                if parsed.get('months_post_raise_min') is not None and request.months_post_raise_min is None:
+                    request.months_post_raise_min = parsed['months_post_raise_min']
+                if parsed.get('months_post_raise_max') is not None and request.months_post_raise_max is None:
+                    request.months_post_raise_max = parsed['months_post_raise_max']
+                if parsed.get('fund_tiers') and not request.fund_tiers:
+                    request.fund_tiers = parsed['fund_tiers']
+                if 'rank_by_stall' in parsed:
+                    request.rank_by_stall = parsed['rank_by_stall']
             except Exception as e:
-                if "already exists" not in str(e).lower():
-                    print(f"Warning: Could not ensure column {col_name} exists: {e}")
+                print(f"Error parsing free text query: {e}")
+        
+        # Initialize query - always needed regardless of free_text_query
+        query = "SELECT * FROM companies WHERE 1=1"
+        params = []
+        filters_applied = False  # Track if any filters were applied
+        
+        # Ensure required columns exist before building query
+        for col_name, col_type in required_columns:
+            if not column_exists('companies', col_name):
+                try:
+                    conn.execute(f"ALTER TABLE companies ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
+                    conn.commit()
+                except Exception as e:
+                    if "already exists" not in str(e).lower():
+                        print(f"Warning: Could not ensure column {col_name} exists: {e}")
     
-    # Filter by stage
-    if request.stages:
-        # #region agent log
-        debug_log("main.py:571", "Checking last_raise_stage before filter", {"thread_id": threading.current_thread().ident, "stages": request.stages}, "B")
-        # #endregion
-        try:
-            stage_col_exists = column_exists('companies', 'last_raise_stage')
+        # Filter by stage
+        if request.stages:
             # #region agent log
-            debug_log("main.py:571", "last_raise_stage exists check result", {"thread_id": threading.current_thread().ident, "exists": stage_col_exists}, "B")
+            debug_log("main.py:571", "Checking last_raise_stage before filter", {"thread_id": threading.current_thread().ident, "stages": request.stages}, "B")
             # #endregion
-            if stage_col_exists:
-                placeholders = ','.join(['?' for _ in request.stages])
-                # Match exact stage OR companies with yc_batch (portfolio companies are typically Seed)
-                # Allow NULL stages if yc_batch exists (YC companies are typically Seed stage)
-                query += f" AND (last_raise_stage IN ({placeholders}) OR (yc_batch IS NOT NULL AND last_raise_stage IS NULL))"
-                params.extend(request.stages)
-                filters_applied = True
-                print(f"[ADVANCED-SEARCH] Applied stages filter: {request.stages} (including YC companies)")
+            try:
+                stage_col_exists = column_exists('companies', 'last_raise_stage')
                 # #region agent log
-                debug_log("main.py:571", "Using last_raise_stage in query", {"thread_id": threading.current_thread().ident}, "B")
+                debug_log("main.py:571", "last_raise_stage exists check result", {"thread_id": threading.current_thread().ident, "exists": stage_col_exists}, "B")
                 # #endregion
-            else:
-                # Fallback: only filter by yc_batch if last_raise_stage column doesn't exist
-                # #region agent log
-                debug_log("main.py:571", "last_raise_stage column missing, skipping stage filter", {"thread_id": threading.current_thread().ident}, "B")
-                # #endregion
-                # Don't add stage filter if column doesn't exist - just continue without it
-                pass
-        except Exception as col_check_err:
-            # #region agent log
-            debug_log("main.py:571", "Error checking last_raise_stage, skipping filter", {"thread_id": threading.current_thread().ident, "error": str(col_check_err)[:100]}, "B")
-            # #endregion
-            # Safe fallback if column check fails - skip stage filter entirely
-            pass  # Don't add any stage filter if column check fails
-    
-    # Filter by focus areas
-    if request.focus_areas:
-        # #region agent log
-        debug_log("main.py:601", "Checking focus_areas before filter", {"thread_id": threading.current_thread().ident, "focus_areas": request.focus_areas}, "B")
-        # #endregion
-        try:
-            focus_col_exists = column_exists('companies', 'focus_areas')
-            # #region agent log
-            debug_log("main.py:601", "focus_areas exists check result", {"thread_id": threading.current_thread().ident, "exists": focus_col_exists}, "B")
-            # #endregion
-            if focus_col_exists:
-                focus_conditions = []
-                for focus in request.focus_areas:
-                    # focus_areas is stored as JSON array like ["AI/ML", "B2B SaaS"]
-                    # Search for both JSON format and plain text
-                    # Also allow NULL/empty focus_areas to match (companies without focus data)
-                    focus_conditions.append("(focus_areas LIKE ? OR focus_areas LIKE ? OR focus_areas IS NULL OR focus_areas = '' OR focus_areas = '[]')")
-                    params.append(f'%"{focus}"%')  # JSON format: ["AI/ML"]
-                    params.append(f'%{focus}%')  # Plain text format
-                if focus_conditions:
-                    query += " AND (" + " OR ".join(focus_conditions) + ")"
+                if stage_col_exists:
+                    placeholders = ','.join(['?' for _ in request.stages])
+                    # Match exact stage OR companies with yc_batch (portfolio companies are typically Seed)
+                    # Allow NULL stages if yc_batch exists (YC companies are typically Seed stage)
+                    query += f" AND (last_raise_stage IN ({placeholders}) OR (yc_batch IS NOT NULL AND last_raise_stage IS NULL))"
+                    params.extend(request.stages)
                     filters_applied = True
-                    print(f"[ADVANCED-SEARCH] Applied focus_areas filter: {request.focus_areas} (allowing NULL/empty)")
+                    print(f"[ADVANCED-SEARCH] Applied stages filter: {request.stages} (including YC companies)")
+                    # #region agent log
+                    debug_log("main.py:571", "Using last_raise_stage in query", {"thread_id": threading.current_thread().ident}, "B")
+                    # #endregion
+                else:
+                    # Fallback: only filter by yc_batch if last_raise_stage column doesn't exist
+                    # #region agent log
+                    debug_log("main.py:571", "last_raise_stage column missing, skipping stage filter", {"thread_id": threading.current_thread().ident}, "B")
+                    # #endregion
+                    # Don't add stage filter if column doesn't exist - just continue without it
+                    pass
+            except Exception as col_check_err:
                 # #region agent log
-                debug_log("main.py:601", "Using focus_areas in query", {"thread_id": threading.current_thread().ident}, "B")
+                debug_log("main.py:571", "Error checking last_raise_stage, skipping filter", {"thread_id": threading.current_thread().ident, "error": str(col_check_err)[:100]}, "B")
                 # #endregion
-            else:
-                # #region agent log
-                debug_log("main.py:601", "focus_areas column missing, skipping filter", {"thread_id": threading.current_thread().ident}, "B")
-                # #endregion
-                # Skip focus_areas filter if column doesn't exist
-                pass
-        except Exception as col_check_err:
+                # Safe fallback if column check fails - skip stage filter entirely
+                pass  # Don't add any stage filter if column check fails
+    
+        # Filter by focus areas
+        if request.focus_areas:
             # #region agent log
-            debug_log("main.py:601", "Error checking focus_areas, skipping filter", {"thread_id": threading.current_thread().ident, "error": str(col_check_err)[:100]}, "B")
+            debug_log("main.py:601", "Checking focus_areas before filter", {"thread_id": threading.current_thread().ident, "focus_areas": request.focus_areas}, "B")
             # #endregion
-            # Safe fallback if column check fails - skip the filter
-            pass
-    
-    # Filter by funding amount (convert to USD if needed)
-    # IMPORTANT: Remove "OR ... IS NULL" to only match companies that actually have funding data
-    if request.funding_min is not None and column_exists('companies', 'funding_amount'):
-        query += " AND funding_amount >= ?"
-        params.append(request.funding_min * 1000000)  # Convert millions to dollars
-        filters_applied = True
-    
-    if request.funding_max is not None and column_exists('companies', 'funding_amount'):
-        query += " AND funding_amount <= ?"
-        params.append(request.funding_max * 1000000)
-        filters_applied = True
-    
-    # Filter by employee count
-    # IMPORTANT: Remove "OR ... IS NULL" to only match companies that actually have employee data
-    # Check both 'employee_count' and 'employees' column names
-    employee_col = None
-    if column_exists('companies', 'employee_count'):
-        employee_col = 'employee_count'
-    elif column_exists('companies', 'employees'):
-        employee_col = 'employees'
-    
-    if employee_col:
-        if request.employees_min is not None:
-            query += f" AND {employee_col} >= ?"
-            params.append(request.employees_min)
+            try:
+                focus_col_exists = column_exists('companies', 'focus_areas')
+                # #region agent log
+                debug_log("main.py:601", "focus_areas exists check result", {"thread_id": threading.current_thread().ident, "exists": focus_col_exists}, "B")
+                # #endregion
+                if focus_col_exists:
+                    focus_conditions = []
+                    for focus in request.focus_areas:
+                        # focus_areas is stored as JSON array like ["AI/ML", "B2B SaaS"]
+                        # Search for both JSON format and plain text
+                        # Also allow NULL/empty focus_areas to match (companies without focus data)
+                        focus_conditions.append("(focus_areas LIKE ? OR focus_areas LIKE ? OR focus_areas IS NULL OR focus_areas = '' OR focus_areas = '[]')")
+                        params.append(f'%"{focus}"%')  # JSON format: ["AI/ML"]
+                        params.append(f'%{focus}%')  # Plain text format
+                    if focus_conditions:
+                        query += " AND (" + " OR ".join(focus_conditions) + ")"
+                        filters_applied = True
+                        print(f"[ADVANCED-SEARCH] Applied focus_areas filter: {request.focus_areas} (allowing NULL/empty)")
+                    # #region agent log
+                    debug_log("main.py:601", "Using focus_areas in query", {"thread_id": threading.current_thread().ident}, "B")
+                    # #endregion
+                else:
+                    # #region agent log
+                    debug_log("main.py:601", "focus_areas column missing, skipping filter", {"thread_id": threading.current_thread().ident}, "B")
+                    # #endregion
+                    # Skip focus_areas filter if column doesn't exist
+                    pass
+            except Exception as col_check_err:
+                # #region agent log
+                debug_log("main.py:601", "Error checking focus_areas, skipping filter", {"thread_id": threading.current_thread().ident, "error": str(col_check_err)[:100]}, "B")
+                # #endregion
+                # Safe fallback if column check fails - skip the filter
+                pass
+        
+        # Filter by funding amount (convert to USD if needed)
+        # IMPORTANT: Remove "OR ... IS NULL" to only match companies that actually have funding data
+        if request.funding_min is not None and column_exists('companies', 'funding_amount'):
+            query += " AND funding_amount >= ?"
+            params.append(request.funding_min * 1000000)  # Convert millions to dollars
             filters_applied = True
         
-        if request.employees_max is not None:
-            query += f" AND {employee_col} <= ?"
-            params.append(request.employees_max)
+        if request.funding_max is not None and column_exists('companies', 'funding_amount'):
+            query += " AND funding_amount <= ?"
+            params.append(request.funding_max * 1000000)
             filters_applied = True
     
-    # Filter by months post-raise
-    # IMPORTANT: Remove "OR ... IS NULL" to only match companies that actually have raise dates
-    if column_exists('companies', 'last_raise_date'):
-        if request.months_post_raise_min is not None or request.months_post_raise_max is not None:
-            if request.months_post_raise_min is not None:
-                max_date = datetime.now() - timedelta(days=request.months_post_raise_min * 30)
-                query += " AND last_raise_date <= ?"
-                params.append(max_date.date())
+        # Filter by employee count
+        # IMPORTANT: Remove "OR ... IS NULL" to only match companies that actually have employee data
+        # Check both 'employee_count' and 'employees' column names
+        employee_col = None
+        if column_exists('companies', 'employee_count'):
+            employee_col = 'employee_count'
+        elif column_exists('companies', 'employees'):
+            employee_col = 'employees'
+        
+        if employee_col:
+            if request.employees_min is not None:
+                query += f" AND {employee_col} >= ?"
+                params.append(request.employees_min)
                 filters_applied = True
             
-            if request.months_post_raise_max is not None:
-                min_date = datetime.now() - timedelta(days=request.months_post_raise_max * 30)
-                query += " AND last_raise_date >= ?"
-                params.append(min_date.date())
+            if request.employees_max is not None:
+                query += f" AND {employee_col} <= ?"
+                params.append(request.employees_max)
                 filters_applied = True
+        
+        # Filter by months post-raise
+        # IMPORTANT: Remove "OR ... IS NULL" to only match companies that actually have raise dates
+        if column_exists('companies', 'last_raise_date'):
+            if request.months_post_raise_min is not None or request.months_post_raise_max is not None:
+                if request.months_post_raise_min is not None:
+                    max_date = datetime.now() - timedelta(days=request.months_post_raise_min * 30)
+                    query += " AND last_raise_date <= ?"
+                    params.append(max_date.date())
+                    filters_applied = True
+                
+                if request.months_post_raise_max is not None:
+                    min_date = datetime.now() - timedelta(days=request.months_post_raise_max * 30)
+                    query += " AND last_raise_date >= ?"
+                    params.append(min_date.date())
+                    filters_applied = True
+        
+        # Filter by fund tier
+        # IMPORTANT: Remove "OR ... IS NULL" to only match companies that actually have fund tier data
+        if request.fund_tiers and column_exists('companies', 'fund_tier'):
+            placeholders = ','.join(['?' for _ in request.fund_tiers])
+            query += f" AND fund_tier IN ({placeholders})"
+            params.extend(request.fund_tiers)
+            filters_applied = True
+        
+        # Debug: Print what filters were requested
+        print(f"[ADVANCED-SEARCH] Request filters:")
+        print(f"  stages: {request.stages}")
+        print(f"  focus_areas: {request.focus_areas}")
+        print(f"  funding_min: {request.funding_min}, funding_max: {request.funding_max}")
+        print(f"  employees_min: {request.employees_min}, employees_max: {request.employees_max}")
+        print(f"  months_post_raise_min: {request.months_post_raise_min}, months_post_raise_max: {request.months_post_raise_max}")
+        print(f"  fund_tiers: {request.fund_tiers}")
+        print(f"[ADVANCED-SEARCH] filters_applied: {filters_applied}")
+        print(f"[ADVANCED-SEARCH] Final query: {query[:500]}")
+        print(f"[ADVANCED-SEARCH] Query params: {params}")
+        
+        # If no filters were applied, check if we should return companies anyway
+        # For portfolio queries or when only rank_by_stall is requested, return companies
+        if not filters_applied:
+            if request.rank_by_stall and not any([request.stages, request.focus_areas, request.funding_min, 
+                                                   request.funding_max, request.employees_min, request.employees_max,
+                                                   request.months_post_raise_min, request.months_post_raise_max, request.fund_tiers]):
+                # Only rank_by_stall requested - return all companies ranked by stall
+                print(f"[ADVANCED-SEARCH] Only rank_by_stall requested, returning all companies")
+                query = "SELECT * FROM companies WHERE 1=1"
+                params = []
+                filters_applied = True  # Allow query to proceed
+            else:
+                print(f"[ADVANCED-SEARCH] WARNING: No filters applied, returning empty result to prevent returning all companies")
+                print(f"[ADVANCED-SEARCH] Request had: stages={request.stages}, focus_areas={request.focus_areas}, funding={request.funding_min}-{request.funding_max}, employees={request.employees_min}-{request.employees_max}")
+                print(f"[ADVANCED-SEARCH] This means none of the requested filters matched existing columns or had valid values")
+                return []
     
-    # Filter by fund tier
-    # IMPORTANT: Remove "OR ... IS NULL" to only match companies that actually have fund tier data
-    if request.fund_tiers and column_exists('companies', 'fund_tier'):
-        placeholders = ','.join(['?' for _ in request.fund_tiers])
-        query += f" AND fund_tier IN ({placeholders})"
-        params.extend(request.fund_tiers)
-        filters_applied = True
-    
-    # Debug: Print what filters were requested
-    print(f"[ADVANCED-SEARCH] Request filters:")
-    print(f"  stages: {request.stages}")
-    print(f"  focus_areas: {request.focus_areas}")
-    print(f"  funding_min: {request.funding_min}, funding_max: {request.funding_max}")
-    print(f"  employees_min: {request.employees_min}, employees_max: {request.employees_max}")
-    print(f"  months_post_raise_min: {request.months_post_raise_min}, months_post_raise_max: {request.months_post_raise_max}")
-    print(f"  fund_tiers: {request.fund_tiers}")
-    print(f"[ADVANCED-SEARCH] filters_applied: {filters_applied}")
-    print(f"[ADVANCED-SEARCH] Final query: {query[:500]}")
-    print(f"[ADVANCED-SEARCH] Query params: {params}")
-    
-    # If no filters were applied, check if we should return companies anyway
-    # For portfolio queries or when only rank_by_stall is requested, return companies
-    if not filters_applied:
-        if request.rank_by_stall and not any([request.stages, request.focus_areas, request.funding_min, 
-                                               request.funding_max, request.employees_min, request.employees_max,
-                                               request.months_post_raise_min, request.months_post_raise_max, request.fund_tiers]):
-            # Only rank_by_stall requested - return all companies ranked by stall
-            print(f"[ADVANCED-SEARCH] Only rank_by_stall requested, returning all companies")
-            query = "SELECT * FROM companies WHERE 1=1"
-            params = []
-            filters_applied = True  # Allow query to proceed
-        else:
-            print(f"[ADVANCED-SEARCH] WARNING: No filters applied, returning empty result to prevent returning all companies")
-            print(f"[ADVANCED-SEARCH] Request had: stages={request.stages}, focus_areas={request.focus_areas}, funding={request.funding_min}-{request.funding_max}, employees={request.employees_min}-{request.employees_max}")
-            print(f"[ADVANCED-SEARCH] This means none of the requested filters matched existing columns or had valid values")
-            return []
-    
-    # Export query details for debugging
-    print(f"[ADVANCED-SEARCH] Executing query: {query[:300]}...")
-    print(f"[ADVANCED-SEARCH] With {len(params)} parameters: {params[:5]}...")
-    
-    # Rank by stall indicators (lower scores = more stalling)
-    if request.rank_by_stall:
-        query += """ ORDER BY 
+        # Export query details for debugging
+        print(f"[ADVANCED-SEARCH] Executing query: {query[:300]}...")
+        print(f"[ADVANCED-SEARCH] With {len(params)} parameters: {params[:5]}...")
+        
+        # Rank by stall indicators (lower scores = more stalling)
+        if request.rank_by_stall:
+            query += """ ORDER BY 
             (messaging_score + motion_score + market_score) / 3 ASC,
             CASE stall_probability 
                 WHEN 'high' THEN 1 
@@ -766,153 +849,169 @@ async def advanced_search(request: AdvancedSearchRequest):
                 WHEN 'low' THEN 3 
                 ELSE 4 
             END ASC"""
-    else:
-        query += " ORDER BY (messaging_score + motion_score + market_score) / 3 DESC"
-    
-    # #region agent log
-    debug_log("main.py:680", "Before advanced_search conn.execute", {"thread_id": threading.current_thread().ident, "query": query[:200]}, "A")
-    try:
-    # #endregion
-        results = conn.execute(query, params).fetchall()
-    # #region agent log
-    except Exception as db_err:
-        error_str = str(db_err)
-        debug_log("main.py:680", "advanced_search conn.execute error", {"thread_id": threading.current_thread().ident, "error": error_str[:200], "error_type": type(db_err).__name__}, "A")
-        # Check if error is about missing columns - if so, rebuild query without those columns
-        # DuckDB error format: "Binder Error: Referenced column \"column_name\" not found in FROM clause!"
-        if ("not found in FROM clause" in error_str or 
-            "Binder Error" in error_str or 
-            "Referenced column" in error_str or
-            "not found" in error_str):
-            # #region agent log
-            debug_log("main.py:680", "Detected missing column error, rebuilding query without problematic columns", {"thread_id": threading.current_thread().ident}, "B")
-            # #endregion
-            # Extract column name from error if possible
-            import re
-            col_match = re.search(r'column "([^"]+)"', error_str)
-            missing_col = col_match.group(1) if col_match else "unknown"
-            print(f"[ADVANCED-SEARCH] WARNING: Column '{missing_col}' not found. Attempting to add it...")
-            
-            # Try to add ALL missing columns (not just the one that failed)
-            # This handles the case where multiple columns are missing
-            columns_to_add = {
-                'last_raise_stage': 'TEXT',
-                'focus_areas': 'TEXT',
-                'funding_amount': 'REAL',
-                'employee_count': 'INTEGER',
-                'last_raise_date': 'DATE',
-                'fund_tier': 'TEXT',
-                'funding_currency': 'TEXT'
-            }
-            
-            added_any = False
-            for col_name, col_type in columns_to_add.items():
-                try:
-                    # Check if it exists first
-                    if not column_exists('companies', col_name):
-                        conn.execute(f"ALTER TABLE companies ADD COLUMN {col_name} {col_type}")
-                        conn.commit()
-                        print(f"[ADVANCED-SEARCH] Added missing column '{col_name}'")
-                        added_any = True
-                except Exception as add_err:
-                    if "already exists" not in str(add_err).lower():
-                        print(f"[ADVANCED-SEARCH] Could not add column '{col_name}': {add_err}")
-            
-            if added_any:
-                print(f"[ADVANCED-SEARCH] Retrying query after adding columns...")
-                # Retry the original query
-                try:
-                    results = conn.execute(query, params).fetchall()
-                    # #region agent log
-                    debug_log("main.py:680", "Query succeeded after adding columns", {"thread_id": threading.current_thread().ident, "result_count": len(results)}, "B")
-                    # #endregion
-                except Exception as retry_err:
-                    # Still failing - rebuild query without problematic filters
-                    print(f"[ADVANCED-SEARCH] Query still failing after adding columns: {retry_err}")
-                    # Build minimal query with only basic filters
+        else:
+            query += " ORDER BY (messaging_score + motion_score + market_score) / 3 DESC"
+        
+        # #region agent log
+        debug_log("main.py:680", "Before advanced_search conn.execute", {"thread_id": threading.current_thread().ident, "query": query[:200]}, "A")
+        # #endregion
+        results = None
+        columns = None
+        try:
+            results = conn.execute(query, params).fetchall()
+            columns = [desc[0] for desc in conn.description]
+            debug_log("main.py:680", "After advanced_search conn.execute", {"thread_id": threading.current_thread().ident, "result_count": len(results)}, "A")
+        except Exception as db_err:
+            error_str = str(db_err)
+            debug_log("main.py:680", "advanced_search conn.execute error", {"thread_id": threading.current_thread().ident, "error": error_str[:200], "error_type": type(db_err).__name__}, "A")
+            # Check if error is about missing columns - if so, rebuild query without those columns
+            # DuckDB error format: "Binder Error: Referenced column \"column_name\" not found in FROM clause!"
+            if ("not found in FROM clause" in error_str or 
+                "Binder Error" in error_str or 
+                "Referenced column" in error_str or
+                "not found" in error_str):
+                # #region agent log
+                debug_log("main.py:680", "Detected missing column error, rebuilding query without problematic columns", {"thread_id": threading.current_thread().ident}, "B")
+                # #endregion
+                # Extract column name from error if possible
+                import re
+                col_match = re.search(r'column "([^"]+)"', error_str)
+                missing_col = col_match.group(1) if col_match else "unknown"
+                print(f"[ADVANCED-SEARCH] WARNING: Column '{missing_col}' not found. Attempting to add it...")
+                
+                # Try to add ALL missing columns (not just the one that failed)
+                # This handles the case where multiple columns are missing
+                columns_to_add = {
+                    'last_raise_stage': 'TEXT',
+                    'focus_areas': 'TEXT',
+                    'funding_amount': 'REAL',
+                    'employee_count': 'INTEGER',
+                    'last_raise_date': 'DATE',
+                    'fund_tier': 'TEXT',
+                    'funding_currency': 'TEXT'
+                }
+                
+                added_any = False
+                for col_name, col_type in columns_to_add.items():
+                    try:
+                        # Check if it exists first
+                        if not column_exists('companies', col_name):
+                            conn.execute(f"ALTER TABLE companies ADD COLUMN {col_name} {col_type}")
+                            conn.commit()
+                            print(f"[ADVANCED-SEARCH] Added missing column '{col_name}'")
+                            added_any = True
+                    except Exception as add_err:
+                        if "already exists" not in str(add_err).lower():
+                            print(f"[ADVANCED-SEARCH] Could not add column '{col_name}': {add_err}")
+                
+                if added_any:
+                    print(f"[ADVANCED-SEARCH] Retrying query after adding columns...")
+                    # Retry the original query
+                    try:
+                        results = conn.execute(query, params).fetchall()
+                        columns = [desc[0] for desc in conn.description]
+                        debug_log("main.py:680", "Query succeeded after adding columns", {"thread_id": threading.current_thread().ident, "result_count": len(results)}, "B")
+                    except Exception as retry_err:
+                        # Still failing - rebuild query without problematic filters
+                        print(f"[ADVANCED-SEARCH] Query still failing after adding columns: {retry_err}")
+                        # Build minimal query with only basic filters
+                        query_safe = "SELECT * FROM companies WHERE 1=1"
+                        params_safe = []
+                        # Only add filters for columns we're 100% sure exist
+                        # Skip stage, focus_areas, funding, employees, dates, fund_tier filters
+                        query_safe += " ORDER BY (messaging_score + motion_score + market_score) / 3 DESC LIMIT 100"
+                        results = conn.execute(query_safe, params_safe).fetchall()
+                        columns = [desc[0] for desc in conn.description]
+                        print(f"[ADVANCED-SEARCH] Using minimal query, found {len(results)} companies")
+                else:
+                    # No columns were added (they might all exist but connection cache is stale)
+                    # Rebuild query without problematic columns
+                    print(f"[ADVANCED-SEARCH] Columns appear to exist but connection cache is stale. Building safe query...")
                     query_safe = "SELECT * FROM companies WHERE 1=1"
                     params_safe = []
-                    # Only add filters for columns we're 100% sure exist
-                    # Skip stage, focus_areas, funding, employees, dates, fund_tier filters
+                    # Only use filters for columns that definitely exist (from CREATE TABLE)
+                    # Skip: last_raise_stage, focus_areas, funding_amount, employee_count, last_raise_date, fund_tier
                     query_safe += " ORDER BY (messaging_score + motion_score + market_score) / 3 DESC LIMIT 100"
                     results = conn.execute(query_safe, params_safe).fetchall()
-                    print(f"[ADVANCED-SEARCH] Using minimal query, found {len(results)} companies")
+                    columns = [desc[0] for desc in conn.description]
+                    print(f"[ADVANCED-SEARCH] Using safe query without new columns, found {len(results)} companies")
             else:
-                # No columns were added (they might all exist but connection cache is stale)
-                # Rebuild query without problematic columns
-                print(f"[ADVANCED-SEARCH] Columns appear to exist but connection cache is stale. Building safe query...")
-                query_safe = "SELECT * FROM companies WHERE 1=1"
-                params_safe = []
-                # Only use filters for columns that definitely exist (from CREATE TABLE)
-                # Skip: last_raise_stage, focus_areas, funding_amount, employee_count, last_raise_date, fund_tier
-                query_safe += " ORDER BY (messaging_score + motion_score + market_score) / 3 DESC LIMIT 100"
-                results = conn.execute(query_safe, params_safe).fetchall()
-                print(f"[ADVANCED-SEARCH] Using safe query without new columns, found {len(results)} companies")
-        else:
-            raise
-    debug_log("main.py:680", "After advanced_search conn.execute", {"thread_id": threading.current_thread().ident, "result_count": len(results)}, "A")
-    # #endregion
-    columns = [desc[0] for desc in conn.description]
+                # Re-raise non-column errors as HTTPException
+                raise HTTPException(status_code=500, detail=f"Database query error: {error_str}")
     
-    companies = []
-    for row in results:
-        company_dict = dict(zip(columns, row))
+        # Ensure results and columns are available
+        if results is None or columns is None:
+            raise HTTPException(status_code=500, detail="Failed to execute database query")
         
-        # Parse JSON fields
-        # #region agent log
-        signals_raw = company_dict.get('signals')
-        debug_log("main.py:483", "Before advanced search JSON parse", {"thread_id": threading.current_thread().ident, "signals_type": type(signals_raw).__name__, "is_empty_str": signals_raw == ""}, "D")
-        # #endregion
-        if isinstance(company_dict.get('signals'), str):
-            try:
-                company_dict['signals'] = json.loads(company_dict['signals'])
+        companies = []
+        for row in results:
+            company_dict = dict(zip(columns, row))
+            
+            # Parse JSON fields
             # #region agent log
-            except Exception as json_err:
-                debug_log("main.py:484", "Advanced search JSON parse signals error", {"thread_id": threading.current_thread().ident, "error": str(json_err), "signals_value": str(signals_raw)[:100]}, "D")
-                company_dict['signals'] = {}
+            signals_raw = company_dict.get('signals')
+            debug_log("main.py:483", "Before advanced search JSON parse", {"thread_id": threading.current_thread().ident, "signals_type": type(signals_raw).__name__, "is_empty_str": signals_raw == ""}, "D")
             # #endregion
-        
-        if isinstance(company_dict.get('focus_areas'), str):
-            try:
-                company_dict['focus_areas'] = json.loads(company_dict['focus_areas'])
+            if isinstance(company_dict.get('signals'), str):
+                try:
+                    company_dict['signals'] = json.loads(company_dict['signals'])
+                # #region agent log
+                except Exception as json_err:
+                    debug_log("main.py:484", "Advanced search JSON parse signals error", {"thread_id": threading.current_thread().ident, "error": str(json_err), "signals_value": str(signals_raw)[:100]}, "D")
+                    company_dict['signals'] = {}
+                # #endregion
+            
+            if isinstance(company_dict.get('focus_areas'), str):
+                try:
+                    company_dict['focus_areas'] = json.loads(company_dict['focus_areas'])
+                # #region agent log
+                except Exception as json_err:
+                    debug_log("main.py:488", "Advanced search JSON parse focus_areas error", {"thread_id": threading.current_thread().ident, "error": str(json_err)}, "D")
+                    company_dict['focus_areas'] = []
+                # #endregion
+            
+            # Format timestamps and dates
             # #region agent log
-            except Exception as json_err:
-                debug_log("main.py:488", "Advanced search JSON parse focus_areas error", {"thread_id": threading.current_thread().ident, "error": str(json_err)}, "D")
-                company_dict['focus_areas'] = []
+            debug_log("main.py:493", "Before advanced search date conversion", {"thread_id": threading.current_thread().ident, "last_raise_date": str(company_dict.get('last_raise_date')), "is_none": company_dict.get('last_raise_date') is None}, "C")
             # #endregion
-        
-        # Format timestamps and dates
-        # #region agent log
-        debug_log("main.py:493", "Before advanced search date conversion", {"thread_id": threading.current_thread().ident, "last_raise_date": str(company_dict.get('last_raise_date')), "is_none": company_dict.get('last_raise_date') is None}, "C")
-        # #endregion
-        if company_dict.get('created_at'):
-            company_dict['created_at'] = str(company_dict['created_at'])
-        if company_dict.get('updated_at'):
-            company_dict['updated_at'] = str(company_dict['updated_at'])
-        if company_dict.get('last_raise_date'):
+            if company_dict.get('created_at'):
+                company_dict['created_at'] = str(company_dict['created_at'])
+            if company_dict.get('updated_at'):
+                company_dict['updated_at'] = str(company_dict['updated_at'])
+            if company_dict.get('last_raise_date'):
+                try:
+                    company_dict['last_raise_date'] = str(company_dict['last_raise_date'])
+                # #region agent log
+                except Exception as date_err:
+                    debug_log("main.py:498", "Advanced search date conversion error", {"thread_id": threading.current_thread().ident, "error": str(date_err), "value": str(company_dict.get('last_raise_date'))}, "C")
+                    company_dict['last_raise_date'] = None
+                # #endregion
+            
+            # Convert funding to millions for display
+            if company_dict.get('funding_amount'):
+                company_dict['funding_amount'] = company_dict['funding_amount'] / 1000000
+            
+            # Ensure scores are not None (default to 0.0 for Pydantic validation)
+            if company_dict.get('messaging_score') is None:
+                company_dict['messaging_score'] = 0.0
+            if company_dict.get('motion_score') is None:
+                company_dict['motion_score'] = 0.0
+            if company_dict.get('market_score') is None:
+                company_dict['market_score'] = 0.0
+            
             try:
-                company_dict['last_raise_date'] = str(company_dict['last_raise_date'])
-            # #region agent log
-            except Exception as date_err:
-                debug_log("main.py:498", "Advanced search date conversion error", {"thread_id": threading.current_thread().ident, "error": str(date_err), "value": str(company_dict.get('last_raise_date'))}, "C")
-                company_dict['last_raise_date'] = None
-            # #endregion
+                companies.append(CompanyResponse(**company_dict))
+            except Exception as e:
+                debug_log("main.py:925", "Error creating CompanyResponse", {"thread_id": threading.current_thread().ident, "error": str(e), "error_type": type(e).__name__}, "B")
+                # Skip this company and continue with the next one
+                continue
         
-        # Convert funding to millions for display
-        if company_dict.get('funding_amount'):
-            company_dict['funding_amount'] = company_dict['funding_amount'] / 1000000
-        
-        # Ensure scores are not None (default to 0.0 for Pydantic validation)
-        if company_dict.get('messaging_score') is None:
-            company_dict['messaging_score'] = 0.0
-        if company_dict.get('motion_score') is None:
-            company_dict['motion_score'] = 0.0
-        if company_dict.get('market_score') is None:
-            company_dict['market_score'] = 0.0
-        
-        companies.append(CompanyResponse(**company_dict))
-    
-    return companies
+        return companies
+    except HTTPException:
+        raise
+    except Exception as e:
+        debug_log("main.py:930", "advanced_search exception", {"thread_id": threading.current_thread().ident, "error": str(e), "error_type": type(e).__name__}, "B")
+        raise HTTPException(status_code=500, detail=f"Error performing advanced search: {str(e)}")
 
 @app.post("/companies/search/free-text")
 async def free_text_search(request: FreeTextSearchRequest):
@@ -1010,7 +1109,103 @@ async def free_text_search(request: FreeTextSearchRequest):
         print(f"[FREE-TEXT] Extracted funding range: ${parsed_params.get('funding_min')}M - ${parsed_params.get('funding_max')}M")
         print(f"[FREE-TEXT] Extracted employee range: {parsed_params.get('employees_min')} - {parsed_params.get('employees_max')}")
         
-        # Discover companies from web sources based on parsed criteria
+        # First, try searching the database with parsed parameters (fast path)
+        print(f"[FREE-TEXT] First searching database with parsed criteria: {json.dumps(parsed_params, indent=2)}")
+        if progress_callback:
+            progress_callback({
+                'type': 'database_search_started',
+                'message': 'Searching database...',
+                'criteria': parsed_params,
+                'timestamp': datetime.now().isoformat()
+            })
+        
+        # Build and execute database query directly (avoid web discovery timeout)
+        try:
+            db_query = "SELECT * FROM companies WHERE 1=1"
+            db_params = []
+            has_filters = False
+            
+            # Filter by stage
+            if parsed_params.get('stages') and column_exists('companies', 'last_raise_stage'):
+                placeholders = ','.join(['?' for _ in parsed_params['stages']])
+                db_query += f" AND (last_raise_stage IN ({placeholders}) OR (yc_batch IS NOT NULL AND last_raise_stage IS NULL))"
+                db_params.extend(parsed_params['stages'])
+                has_filters = True
+            
+            # Filter by focus areas
+            if parsed_params.get('focus_areas') and column_exists('companies', 'focus_areas'):
+                focus_conditions = []
+                for focus in parsed_params['focus_areas']:
+                    focus_conditions.append("(focus_areas LIKE ? OR focus_areas LIKE ? OR focus_areas IS NULL OR focus_areas = '' OR focus_areas = '[]')")
+                    db_params.append(f'%"{focus}"%')
+                    db_params.append(f'%{focus}%')
+                if focus_conditions:
+                    db_query += " AND (" + " OR ".join(focus_conditions) + ")"
+                    has_filters = True
+            
+            # Add ranking
+            if parsed_params.get('rank_by_stall', True):
+                db_query += """ ORDER BY 
+                (messaging_score + motion_score + market_score) / 3 ASC,
+                CASE stall_probability 
+                    WHEN 'high' THEN 1 
+                    WHEN 'medium' THEN 2 
+                    WHEN 'low' THEN 3 
+                    ELSE 4 
+                END ASC"""
+            else:
+                db_query += " ORDER BY (messaging_score + motion_score + market_score) / 3 DESC"
+            
+            db_query += " LIMIT 1000"  # Limit results
+            
+            # Execute query
+            if has_filters or not parsed_params.get('is_portfolio_query'):
+                db_results_raw = conn.execute(db_query, db_params).fetchall()
+                db_columns = [desc[0] for desc in conn.description]
+                db_results = []
+                for row in db_results_raw:
+                    company_dict = dict(zip(db_columns, row))
+                    # Convert focus_areas from JSON string to list if needed
+                    if company_dict.get('focus_areas') and isinstance(company_dict['focus_areas'], str):
+                        try:
+                            company_dict['focus_areas'] = json.loads(company_dict['focus_areas'])
+                        except:
+                            pass
+                    db_results.append(company_dict)
+                
+                print(f"[FREE-TEXT] Database search found {len(db_results)} companies")
+                if db_results and len(db_results) > 0:
+                    # Return database results immediately - no need for web discovery
+                    if progress_callback:
+                        progress_callback({
+                            'type': 'search_complete',
+                            'companies_found': len(db_results),
+                            'message': f'Found {len(db_results)} companies in database',
+                            'timestamp': datetime.now().isoformat()
+                        })
+                    print(f"[FREE-TEXT] Returning {len(db_results)} companies from database")
+                    return db_results
+        except Exception as e:
+            print(f"[FREE-TEXT] Error searching database: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Only do web discovery if database search returned no results AND it's not a portfolio query
+        if parsed_params.get('is_portfolio_query'):
+            print(f"[FREE-TEXT] Portfolio query detected - will scrape portfolios")
+        else:
+            print(f"[FREE-TEXT] No database results found - skipping web discovery for now (to avoid timeout)")
+            # Return empty results rather than timing out on web discovery
+            if progress_callback:
+                progress_callback({
+                    'type': 'search_complete',
+                    'companies_found': 0,
+                    'message': 'No companies found in database. Web discovery disabled to prevent timeouts.',
+                    'timestamp': datetime.now().isoformat()
+                })
+            return []
+        
+        # Discover companies from web sources based on parsed criteria (only for portfolio queries)
         print(f"[FREE-TEXT] Starting web discovery with criteria: {json.dumps(parsed_params, indent=2)}")
         if progress_callback:
             progress_callback({
@@ -1025,10 +1220,103 @@ async def free_text_search(request: FreeTextSearchRequest):
         try:
             # For portfolio queries, start scraping in background and return immediately
             if parsed_params.get('is_portfolio_query'):
-                print(f"[FREE-TEXT] Portfolio query - starting background scraping task")
+                # Check if scraping is already in progress BEFORE starting new task
+                with _portfolio_scraping_active:
+                    if _scraping_in_progress:
+                        print(f"[FREE-TEXT] Portfolio scraping already in progress, skipping duplicate request")
+                        from fastapi.responses import JSONResponse
+                        return JSONResponse(
+                            content=[],
+                            headers={"X-Session-ID": session_id, "X-Status": "already-scraping"}
+                        )
+                    _scraping_in_progress = True
+                    print(f"[FREE-TEXT] Portfolio query - starting background scraping task (lock acquired)")
+                
                 # Start scraping in background task
                 import asyncio
                 async def background_scrape():
+                    saved_count = 0
+                    batch_size = 10  # Save companies in batches of 10
+                    companies_batch = []
+                    
+                    def batch_progress_callback(event):
+                        """Wrapper that intercepts progress events and saves companies in batches"""
+                        nonlocal saved_count, companies_batch
+                        
+                        # Check if this event contains companies to save
+                        if event.get('type') == 'progress' and 'companies_batch' in event:
+                            batch = event.get('companies_batch', [])
+                            if batch:
+                                companies_batch.extend(batch)
+                                
+                                # Save batch when it reaches batch_size
+                                if len(companies_batch) >= batch_size:
+                                    saved = _save_companies_batch(companies_batch[:batch_size])
+                                    saved_count += saved
+                                    companies_batch = companies_batch[batch_size:]
+                                    
+                                    # Emit companies_added event
+                                    if progress_callback:
+                                        progress_callback({
+                                            'type': 'companies_added',
+                                            'companies': companies_batch[:batch_size],
+                                            'total_saved': saved_count,
+                                            'message': f'Saved {saved} companies to database (total: {saved_count})',
+                                            'timestamp': datetime.now().isoformat()
+                                        })
+                        
+                        # Forward all events to original callback
+                        if progress_callback:
+                            progress_callback(event)
+                    
+                    def _save_companies_batch(batch):
+                        """Save a batch of companies to database"""
+                        saved = 0
+                        for company in batch:
+                            try:
+                                domain = company.get('domain', '').strip()
+                                if not domain:
+                                    continue
+                                
+                                # Check if company already exists
+                                existing = conn.execute(
+                                    "SELECT id FROM companies WHERE domain = ?",
+                                    (domain,)
+                                ).fetchone()
+                                
+                                if not existing:
+                                    # Ensure columns exist
+                                    for col_name, col_type in required_columns:
+                                        if not column_exists('companies', col_name):
+                                            try:
+                                                conn.execute(f"ALTER TABLE companies ADD COLUMN {col_name} {col_type}")
+                                                conn.commit()
+                                            except:
+                                                pass
+                                    
+                                    # Insert company
+                                    company_id = abs(hash(domain)) % 1000000
+                                    conn.execute("""
+                                        INSERT INTO companies 
+                                        (id, name, domain, source, last_raise_stage, focus_areas, created_at, updated_at)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                    """, (
+                                        company_id,
+                                        company.get('name', ''),
+                                        domain,
+                                        company.get('source', 'portfolio_scraping'),
+                                        company.get('last_raise_stage'),
+                                        json.dumps(company.get('focus_areas', [])),
+                                        datetime.now(),
+                                        datetime.now()
+                                    ))
+                                    conn.commit()
+                                    saved += 1
+                            except Exception as e:
+                                print(f"[FREE-TEXT] Error saving company batch: {e}")
+                                conn.rollback()
+                        return saved
+                    
                     try:
                         if progress_callback:
                             progress_callback({
@@ -1037,13 +1325,28 @@ async def free_text_search(request: FreeTextSearchRequest):
                                 'sources': parsed_params.get('portfolio_sources', []),
                                 'timestamp': datetime.now().isoformat()
                             })
-                        companies = await discovery.discover_companies(parsed_params, progress_callback=progress_callback)
-                        print(f"[FREE-TEXT] Background scraping completed: {len(companies)} companies")
+                        companies = await discovery.discover_companies(parsed_params, progress_callback=batch_progress_callback)
+                        
+                        # Save any remaining companies in batch
+                        if companies_batch:
+                            saved = _save_companies_batch(companies_batch)
+                            saved_count += saved
+                            if progress_callback:
+                                progress_callback({
+                                    'type': 'companies_added',
+                                    'companies': companies_batch,
+                                    'total_saved': saved_count,
+                                    'message': f'Saved final batch of {saved} companies',
+                                    'timestamp': datetime.now().isoformat()
+                                })
+                        
+                        print(f"[FREE-TEXT] Background scraping completed: {len(companies)} companies found, {saved_count} saved")
                         if progress_callback:
                             progress_callback({
                                 'type': 'scraping_complete',
                                 'companies_found': len(companies),
-                                'message': f'Scraping completed: {len(companies)} companies found',
+                                'companies_saved': saved_count,
+                                'message': f'Scraping completed: {len(companies)} companies found, {saved_count} saved to database',
                                 'timestamp': datetime.now().isoformat()
                             })
                     except Exception as e:
@@ -1062,6 +1365,12 @@ async def free_text_search(request: FreeTextSearchRequest):
                             await discovery.close()
                         except:
                             pass
+                        finally:
+                            if task_id:
+                                _active_scraping_tasks.discard(task_id)
+                            with _portfolio_scraping_active:
+                                _scraping_in_progress = False
+                            print(f"[FREE-TEXT] Background scraping task {task_id} completed, lock released")
                 
                 # Start background task (don't await - let it run in background)
                 asyncio.create_task(background_scrape())
@@ -1472,6 +1781,443 @@ async def scan_company_endpoint(request: ScanRequest):
         # #endregion
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/migrate/investor-relationships")
+async def migrate_investor_relationships():
+    """
+    Run migration to convert company.source to investor-company relationships.
+    This is a one-time migration that can be run via API.
+    """
+    try:
+        from migrate_source_to_relationships import migrate_companies
+        migrate_companies(conn)
+        return {"status": "success", "message": "Migration completed successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Migration error: {str(e)}")
+
+@app.get("/companies/{company_id}/investors")
+async def get_company_investors(company_id: int):
+    """Get all investors for a specific company"""
+    try:
+        results = conn.execute("""
+            SELECT 
+                ci.id,
+                ci.investment_type,
+                ci.funding_round,
+                ci.funding_amount,
+                ci.funding_currency,
+                ci.investment_date,
+                ci.lead_investor,
+                ci.valid_from,
+                ci.valid_to,
+                v.id as investor_id,
+                v.firm_name,
+                v.type as investor_type,
+                v.stage as investor_stage
+            FROM company_investments ci
+            JOIN vcs v ON ci.investor_id = v.id
+            WHERE ci.company_id = ? AND (ci.valid_to IS NULL OR ci.valid_to >= CURRENT_DATE)
+            ORDER BY ci.investment_date DESC NULLS LAST, ci.created_at DESC
+        """, (company_id,)).fetchall()
+        
+        investors = []
+        for row in results:
+            investors.append({
+                "investment_id": row[0],
+                "investment_type": row[1],
+                "funding_round": row[2],
+                "funding_amount": row[3],
+                "funding_currency": row[4],
+                "investment_date": str(row[5]) if row[5] else None,
+                "lead_investor": bool(row[6]),
+                "valid_from": str(row[7]) if row[7] else None,
+                "valid_to": str(row[8]) if row[8] else None,
+                "investor": {
+                    "id": row[9],
+                    "firm_name": row[10],
+                    "type": row[11],
+                    "stage": row[12]
+                }
+            })
+        
+        return investors
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching investors: {str(e)}")
+
+@app.get("/investors")
+async def get_investors():
+    """Get all investors"""
+    try:
+        results = conn.execute("""
+            SELECT id, firm_name, type, stage, domain, url, focus_areas, created_at
+            FROM vcs
+            ORDER BY firm_name
+        """).fetchall()
+        
+        investors = []
+        for row in results:
+            investors.append({
+                "id": row[0],
+                "firm_name": row[1],
+                "type": row[2],
+                "stage": row[3],
+                "domain": row[4],
+                "url": row[5],
+                "focus_areas": json.loads(row[6]) if row[6] and isinstance(row[6], str) else (row[6] if row[6] else []),
+                "created_at": str(row[7]) if row[7] else None,
+            })
+        
+        return investors
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching investors: {str(e)}")
+
+@app.get("/investors/relationships")
+async def get_investor_relationships():
+    """Get all investment relationships"""
+    try:
+        results = conn.execute("""
+            SELECT 
+                ci.id,
+                ci.company_id,
+                ci.investor_id,
+                ci.investment_type,
+                ci.funding_round,
+                ci.funding_amount,
+                ci.investment_date,
+                ci.lead_investor,
+                v.firm_name,
+                c.name as company_name
+            FROM company_investments ci
+            JOIN vcs v ON ci.investor_id = v.id
+            JOIN companies c ON ci.company_id = c.id
+            WHERE ci.valid_to IS NULL OR ci.valid_to >= CURRENT_DATE
+            ORDER BY ci.investment_date DESC NULLS LAST
+        """).fetchall()
+        
+        relationships = []
+        for row in results:
+            relationships.append({
+                "id": row[0],
+                "company_id": row[1],
+                "investor_id": row[2],
+                "investment_type": row[3],
+                "funding_round": row[4],
+                "funding_amount": row[5],
+                "investment_date": str(row[6]) if row[6] else None,
+                "lead_investor": bool(row[7]),
+                "investor_name": row[8],
+                "company_name": row[9],
+            })
+        
+        return relationships
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching relationships: {str(e)}")
+
+@app.get("/investors/{investor_id}/portfolio")
+async def get_investor_portfolio(investor_id: int):
+    """Get all companies for a specific investor"""
+    try:
+        results = conn.execute("""
+            SELECT 
+                c.id,
+                c.name,
+                c.domain,
+                c.source,
+                c.yc_batch,
+                c.messaging_score,
+                c.motion_score,
+                c.market_score,
+                c.stall_probability,
+                ci.investment_type,
+                ci.funding_round,
+                ci.funding_amount,
+                ci.investment_date,
+                ci.lead_investor
+            FROM company_investments ci
+            JOIN companies c ON ci.company_id = c.id
+            WHERE ci.investor_id = ? AND (ci.valid_to IS NULL OR ci.valid_to >= CURRENT_DATE)
+            ORDER BY ci.investment_date DESC NULLS LAST, c.created_at DESC
+        """, (investor_id,)).fetchall()
+        
+        companies = []
+        for row in results:
+            companies.append({
+                "id": row[0],
+                "name": row[1],
+                "domain": row[2],
+                "source": row[3],
+                "yc_batch": row[4],
+                "messaging_score": row[5],
+                "motion_score": row[6],
+                "market_score": row[7],
+                "stall_probability": row[8],
+                "investment_type": row[9],
+                "funding_round": row[10],
+                "funding_amount": row[11],
+                "investment_date": str(row[12]) if row[12] else None,
+                "lead_investor": bool(row[13])
+            })
+        
+        return companies
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching portfolio: {str(e)}")
+
+@app.get("/companies/{company_id}/funding-rounds")
+async def get_company_funding_rounds(company_id: int):
+    """Get funding history for a specific company"""
+    try:
+        # Get funding rounds
+        rounds = conn.execute("""
+            SELECT 
+                fr.id,
+                fr.round_name,
+                fr.round_date,
+                fr.amount,
+                fr.currency,
+                fr.valuation,
+                fr.lead_investor_id,
+                fr.investor_count,
+                v.firm_name as lead_investor_name
+            FROM funding_rounds fr
+            LEFT JOIN vcs v ON fr.lead_investor_id = v.id
+            WHERE fr.company_id = ?
+            ORDER BY fr.round_date DESC NULLS LAST
+        """, (company_id,)).fetchall()
+        
+        funding_rounds = []
+        for round_row in rounds:
+            round_id = round_row[0]
+            
+            # Get investors for this round
+            investors = conn.execute("""
+                SELECT 
+                    v.id,
+                    v.firm_name,
+                    v.type,
+                    fri.amount,
+                    fri.lead_investor
+                FROM funding_round_investors fri
+                JOIN vcs v ON fri.investor_id = v.id
+                WHERE fri.funding_round_id = ?
+            """, (round_id,)).fetchall()
+            
+            round_investors = []
+            for inv_row in investors:
+                round_investors.append({
+                    "id": inv_row[0],
+                    "firm_name": inv_row[1],
+                    "type": inv_row[2],
+                    "amount": inv_row[3],
+                    "lead_investor": bool(inv_row[4])
+                })
+            
+            funding_rounds.append({
+                "id": round_id,
+                "round_name": round_row[1],
+                "round_date": str(round_row[2]) if round_row[2] else None,
+                "amount": round_row[3],
+                "currency": round_row[4],
+                "valuation": round_row[5],
+                "lead_investor_id": round_row[6],
+                "lead_investor_name": round_row[8],
+                "investor_count": round_row[7],
+                "investors": round_investors
+            })
+        
+        return funding_rounds
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching funding rounds: {str(e)}")
+
+@app.post("/companies/{company_id}/investments")
+async def add_company_investment(
+    company_id: int,
+    investor_id: int,
+    investment_type: str,
+    funding_round: Optional[str] = None,
+    funding_amount: Optional[float] = None,
+    funding_currency: str = "USD",
+    investment_date: Optional[date] = None,
+    lead_investor: bool = False,
+    notes: Optional[str] = None
+):
+    """Add an investment relationship between a company and investor"""
+    try:
+        # Verify company exists
+        company = conn.execute("SELECT id FROM companies WHERE id = ?", (company_id,)).fetchone()
+        if not company:
+            raise HTTPException(status_code=404, detail="Company not found")
+        
+        # Verify investor exists
+        investor = conn.execute("SELECT id FROM vcs WHERE id = ?", (investor_id,)).fetchone()
+        if not investor:
+            raise HTTPException(status_code=404, detail="Investor not found")
+        
+        # Create investment relationship
+        conn.execute("""
+            INSERT INTO company_investments 
+            (company_id, investor_id, investment_type, funding_round, funding_amount, 
+             funding_currency, investment_date, valid_from, lead_investor, notes, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            company_id,
+            investor_id,
+            investment_type,
+            funding_round,
+            funding_amount,
+            funding_currency,
+            investment_date,
+            datetime.now().date(),
+            None,  # valid_to (NULL = active)
+            lead_investor,
+            notes,
+            datetime.now(),
+            datetime.now()
+        ))
+        conn.commit()
+        
+        return {"status": "success", "message": "Investment relationship created"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating investment: {str(e)}")
+
+@app.post("/graph/sync")
+async def sync_graph_database():
+    """
+    Sync DuckDB data to graph database (Neo4j/FalkorDB).
+    This creates/updates graph nodes and relationships.
+    """
+    try:
+        from graph_db import GraphDB, sync_duckdb_to_graph
+        
+        db_type = os.getenv("GRAPH_DB_TYPE", "neo4j")  # "neo4j" or "falkor"
+        graph_db = GraphDB(db_type=db_type)
+        
+        if not graph_db.driver and not graph_db.graph:
+            raise HTTPException(
+                status_code=503,
+                detail="Graph database not configured. Set NEO4J_URI/NEO4J_USER/NEO4J_PASSWORD or REDIS_HOST/REDIS_PORT environment variables."
+            )
+        
+        sync_duckdb_to_graph(conn, graph_db)
+        graph_db.close()
+        
+        return {"status": "success", "message": "Graph database synced successfully"}
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Graph database drivers not installed. Install neo4j package: pip install neo4j"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Sync error: {str(e)}")
+
+@app.get("/investors/{investor_id}/co-investors")
+async def get_co_investors(investor_id: int, limit: int = 10):
+    """Get VCs that co-invest with a given investor (using graph database)"""
+    try:
+        from graph_db import GraphDB
+        
+        db_type = os.getenv("GRAPH_DB_TYPE", "neo4j")
+        graph_db = GraphDB(db_type=db_type)
+        
+        if not graph_db.driver and not graph_db.graph:
+            # Fallback to relational query
+            results = conn.execute("""
+                SELECT 
+                    i2.id,
+                    i2.firm_name,
+                    COUNT(DISTINCT c.id) as co_investment_count
+                FROM company_investments ci1
+                JOIN companies c ON ci1.company_id = c.id
+                JOIN company_investments ci2 ON c.id = ci2.company_id
+                JOIN vcs i1 ON ci1.investor_id = i1.id
+                JOIN vcs i2 ON ci2.investor_id = i2.id
+                WHERE i1.id = ? AND i2.id <> i1.id
+                GROUP BY i2.id, i2.firm_name
+                ORDER BY co_investment_count DESC
+                LIMIT ?
+            """, (investor_id, limit)).fetchall()
+            
+            return [{
+                "investor_id": row[0],
+                "firm_name": row[1],
+                "co_investment_count": row[2]
+            } for row in results]
+        
+        co_investors = graph_db.find_co_investors(investor_id, limit)
+        graph_db.close()
+        
+        return co_investors
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error finding co-investors: {str(e)}")
+
+@app.get("/companies/{company_id1}/path-to/{company_id2}")
+async def get_company_path(company_id1: int, company_id2: int, max_depth: int = 3):
+    """Find path between two companies through shared investors (using graph database)"""
+    try:
+        from graph_db import GraphDB
+        
+        db_type = os.getenv("GRAPH_DB_TYPE", "neo4j")
+        graph_db = GraphDB(db_type=db_type)
+        
+        if not graph_db.driver and not graph_db.graph:
+            raise HTTPException(
+                status_code=503,
+                detail="Graph database not available for path finding"
+            )
+        
+        path = graph_db.find_investment_path(company_id1, company_id2, max_depth)
+        graph_db.close()
+        
+        if path:
+            return path
+        else:
+            return {"message": "No path found", "path": None}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error finding path: {str(e)}")
+
+@app.get("/companies/export")
+async def export_all_companies():
+    """
+    Export all companies without any filtering or transformation.
+    Returns raw company data for CSV export.
+    """
+    try:
+        # Get all companies without any filters or transformations
+        query = "SELECT * FROM companies ORDER BY id"
+        results = conn.execute(query).fetchall()
+        columns = [desc[0] for desc in conn.description]
+        
+        companies = []
+        for row in results:
+            company_dict = dict(zip(columns, row))
+            # Keep raw values - don't transform funding_amount or scores
+            # Only parse JSON fields that need parsing
+            if isinstance(company_dict.get('signals'), str) and company_dict.get('signals'):
+                try:
+                    company_dict['signals'] = json.loads(company_dict['signals'])
+                except:
+                    company_dict['signals'] = {}
+            
+            if isinstance(company_dict.get('focus_areas'), str) and company_dict.get('focus_areas'):
+                try:
+                    company_dict['focus_areas'] = json.loads(company_dict['focus_areas'])
+                except:
+                    company_dict['focus_areas'] = []
+            
+            # Convert dates to strings for JSON serialization
+            if company_dict.get('created_at'):
+                company_dict['created_at'] = str(company_dict['created_at'])
+            if company_dict.get('updated_at'):
+                company_dict['updated_at'] = str(company_dict['updated_at'])
+            if company_dict.get('last_raise_date'):
+                company_dict['last_raise_date'] = str(company_dict['last_raise_date'])
+            
+            companies.append(company_dict)
+        
+        return companies
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export error: {str(e)}")
+
 @app.get("/stats", response_model=StatsResponse)
 async def get_stats():
     """Get aggregate market health statistics"""
@@ -1565,8 +2311,9 @@ async def load_seed_vcs():
 @app.post("/portfolios/discover")
 async def discover_vcs():
     """Discover new VCs from web sources"""
-    discovery = VCDiscovery()
-    discovered_vcs = await discovery.discover_all()
+    try:
+        discovery = VCDiscovery()
+        discovered_vcs = await discovery.discover_all()
     
     added_count = 0
     for vc in discovered_vcs:
@@ -1603,13 +2350,21 @@ async def discover_vcs():
             print(f"Error adding VC {vc.get('firm_name')}: {e}")
             continue
     
-    conn.commit()
-    
-    return {
-        "discovered": len(discovered_vcs),
-        "added": added_count,
-        "message": f"Discovered {len(discovered_vcs)} VCs, added {added_count} new ones"
-    }
+        conn.commit()
+        
+        return {
+            "discovered": len(discovered_vcs),
+            "added": added_count,
+            "message": f"Discovered {len(discovered_vcs)} VCs, added {added_count} new ones"
+        }
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"VC discovery error: {error_details}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"VC discovery failed: {str(e)}. This operation can take several minutes and may timeout. Please try again or check backend logs."
+        )
 
 @app.post("/portfolios/add", response_model=PortfolioInfo)
 async def add_vc(request: AddVCRequest):
@@ -1751,7 +2506,23 @@ async def scrape_portfolios(request: PortfolioScrapeRequest):
     analyzed_companies = []
     
     # Collect all companies from scraped portfolios
+    # Build VC name to ID mapping for investment relationships
+    vc_name_to_id = {}
+    company_to_vc = {}  # Map company to VC firm name
     for firm_name, companies in portfolio_results.items():
+        # Get VC ID for this portfolio
+        vc_result = conn.execute(
+            "SELECT id FROM vcs WHERE firm_name = ?",
+            (firm_name,)
+        ).fetchone()
+        if vc_result:
+            vc_name_to_id[firm_name] = vc_result[0]
+            # Map each company to this VC
+            for company in companies:
+                company_key = company.get('domain', '').strip() or company.get('name', '').strip()
+                if company_key:
+                    company_to_vc[company_key] = firm_name
+        
         all_companies.extend(companies)
     
     print(f"Total companies scraped: {len(all_companies)}")
@@ -1911,6 +2682,56 @@ async def scrape_portfolios(request: PortfolioScrapeRequest):
                     debug_log("main.py:968", "Portfolio scrape INSERT error", {"thread_id": threading.current_thread().ident, "error": str(db_err)}, "B")
                     raise
                 # #endregion
+            
+            # Create investment relationship if this company came from a portfolio
+            company_key = domain or company.get('name', '').strip()
+            if company_key in company_to_vc:
+                vc_firm_name = company_to_vc[company_key]
+                investor_id = vc_name_to_id.get(vc_firm_name)
+                
+                if investor_id:
+                    try:
+                        # Check if investment relationship already exists
+                        existing_inv = conn.execute("""
+                            SELECT id FROM company_investments 
+                            WHERE company_id = ? AND investor_id = ?
+                        """, (company_id, investor_id)).fetchone()
+                        
+                        if not existing_inv:
+                            # Determine investment type based on VC type
+                            vc_type_result = conn.execute(
+                                "SELECT type FROM vcs WHERE id = ?",
+                                (investor_id,)
+                            ).fetchone()
+                            vc_type = vc_type_result[0] if vc_type_result else 'VC'
+                            investment_type = 'accelerator_batch' if vc_type.lower() in ['accelerator', 'studio'] else 'portfolio'
+                            
+                            # Infer funding round
+                            funding_round = company_record.get('last_raise_stage') or 'Seed'
+                            
+                            # Create investment relationship
+                            conn.execute("""
+                                INSERT INTO company_investments 
+                                (company_id, investor_id, investment_type, funding_round, funding_amount, 
+                                 funding_currency, investment_date, valid_from, valid_to, lead_investor, created_at, updated_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                company_id,
+                                investor_id,
+                                investment_type,
+                                funding_round,
+                                company_record.get('funding_amount'),
+                                company_record.get('funding_currency', 'USD'),
+                                company_record.get('last_raise_date'),
+                                datetime.now().date(),
+                                None,  # valid_to (NULL = active)
+                                True if investment_type == 'accelerator_batch' else False,  # Lead for accelerators
+                                datetime.now(),
+                                datetime.now()
+                            ))
+                    except Exception as inv_err:
+                        # Don't fail the whole process if investment creation fails
+                        print(f"Warning: Could not create investment relationship for {company_record['name']}: {inv_err}")
             
             analyzed_companies.append(CompanyResponse(**company_record))
             analyzed_count += 1

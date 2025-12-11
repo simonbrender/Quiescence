@@ -83,3 +83,6 @@ DuckDB connections cache the schema. Even though we:
 
 The running backend process has a cached view of the schema and doesn't see the new columns until it reconnects (which happens on restart).
 
+
+
+
