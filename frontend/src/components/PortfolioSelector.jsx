@@ -375,6 +375,13 @@ function PortfolioSelector({ onScrapeComplete }) {
           )}
         </>
       )}
+
+      {showDiscoveryProgress && (
+        <DiscoveryProgress
+          onComplete={handleDiscoveryComplete}
+          onClose={handleDiscoveryClose}
+        />
+      )}
     </Card>
   )
 }
