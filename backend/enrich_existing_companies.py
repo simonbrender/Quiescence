@@ -109,9 +109,14 @@ async def enrich_company_batch(conn, companies: List[Dict], batch_size: int = 50
                     updates['last_raise_stage'] = 'Seed'
                     print(f"  → Stage: Seed (from YC batch)")
             
-            # Try to use data_enrichment module if available
+            # Try to use enhanced enrichment with Firecrawl if available
             try:
-                enriched = await enrich_company_data(company, domain)
+                from enhanced_enrichment import EnhancedEnrichment
+                import os
+                firecrawl_key = os.getenv('FIRECRAWL_API_KEY')
+                enricher = EnhancedEnrichment(firecrawl_api_key=firecrawl_key)
+                enriched = await enricher.enrich_company(company, domain)
+                
                 if enriched and enriched != company:
                     # Merge enriched data
                     if enriched.get('last_raise_stage') and not updates.get('last_raise_stage'):
@@ -125,8 +130,30 @@ async def enrich_company_batch(conn, companies: List[Dict], batch_size: int = 50
                         updates['employee_count'] = enriched['employee_count']
                     if enriched.get('funding_amount') and not updates.get('funding_amount'):
                         updates['funding_amount'] = enriched['funding_amount']
+                    if enriched.get('founding_date') and not company.get('founding_date'):
+                        updates['founding_date'] = enriched['founding_date']
+                    if enriched.get('headquarters_location') and not company.get('headquarters_location'):
+                        updates['headquarters_location'] = enriched['headquarters_location']
+            except ImportError:
+                # Fallback to basic enrichment
+                try:
+                    enriched = await enrich_company_data(company, domain)
+                    if enriched and enriched != company:
+                        if enriched.get('last_raise_stage') and not updates.get('last_raise_stage'):
+                            updates['last_raise_stage'] = enriched['last_raise_stage']
+                        if enriched.get('focus_areas') and not updates.get('focus_areas'):
+                            if isinstance(enriched['focus_areas'], list):
+                                updates['focus_areas'] = json.dumps(enriched['focus_areas'])
+                            else:
+                                updates['focus_areas'] = enriched['focus_areas']
+                        if enriched.get('employee_count') and not updates.get('employee_count'):
+                            updates['employee_count'] = enriched['employee_count']
+                        if enriched.get('funding_amount') and not updates.get('funding_amount'):
+                            updates['funding_amount'] = enriched['funding_amount']
+                except Exception as e:
+                    print(f"  → Basic enrichment error (continuing): {e}")
             except Exception as e:
-                print(f"  → Enrichment module error (continuing): {e}")
+                print(f"  → Enhanced enrichment error (continuing): {e}")
             
             # Update database if we have updates
             if updates:

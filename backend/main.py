@@ -1308,7 +1308,7 @@ async def free_text_search(request: FreeTextSearchRequest):
         raise HTTPException(status_code=500, detail=f"Error parsing query: {str(e)}")
 
 @app.post("/companies/enrich")
-async def enrich_companies_endpoint(batch_size: int = 100):
+async def enrich_companies_endpoint(batch_size: int = 100, use_firecrawl: bool = True):
     """
     Enrich companies in the database with stage, focus areas, employees, and funding data.
     Runs enrichment in background and returns immediately.
