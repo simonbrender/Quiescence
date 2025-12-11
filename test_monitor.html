@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portfolio Scraping Monitor - Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #e2e8f0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #22d3ee;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #94a3b8;
+            margin-bottom: 30px;
+        }
+        .controls {
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid rgba(34, 211, 238, 0.3);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .input-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #22d3ee;
+            font-weight: 500;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid rgba(34, 211, 238, 0.3);
+            border-radius: 4px;
+            color: #e2e8f0;
+            font-size: 14px;
+        }
+        button {
+            background: #22d3ee;
+            color: #0f172a;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            margin-right: 10px;
+            margin-top: 10px;
+        }
+        button:hover {
+            background: #06b6d4;
+        }
+        button:disabled {
+            background: #475569;
+            cursor: not-allowed;
+        }
+        .monitor {
+            background: rgba(15, 23, 42, 0.9);
+            border: 2px solid rgba(34, 211, 238, 0.5);
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: rgba(30, 41, 59, 0.5);
+            border-radius: 8px;
+        }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #475569;
+        }
+        .status-indicator.connected {
+            background: #22d3ee;
+            box-shadow: 0 0 10px #22d3ee;
+        }
+        .status-indicator.connecting {
+            background: #fbbf24;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            background: rgba(30, 41, 59, 0.6);
+            border: 1px solid rgba(34, 211, 238, 0.2);
+            border-radius: 8px;
+            padding: 15px;
+        }
+        .stat-label {
+            color: #94a3b8;
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+        .stat-value {
+            color: #22d3ee;
+            font-size: 24px;
+            font-weight: 700;
+        }
+        .screenshot-container {
+            background: #000;
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 20px;
+            min-height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .screenshot-container img {
+            max-width: 100%;
+            max-height: 500px;
+            border-radius: 4px;
+        }
+        .event-log {
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(34, 211, 238, 0.2);
+            border-radius: 8px;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .event {
+            margin-bottom: 8px;
+            padding: 5px;
+            border-left: 3px solid rgba(34, 211, 238, 0.5);
+            padding-left: 10px;
+        }
+        .event-time {
+            color: #64748b;
+            margin-right: 10px;
+        }
+        .event-type {
+            color: #22d3ee;
+            font-weight: 600;
+            margin-right: 10px;
+        }
+        .event-message {
+            color: #e2e8f0;
+        }
+        .event.error {
+            border-left-color: #ef4444;
+        }
+        .event.error .event-type {
+            color: #ef4444;
+        }
+        .event.success {
+            border-left-color: #22c55e;
+        }
+        .event.success .event-type {
+            color: #22c55e;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Portfolio Scraping Monitor</h1>
+        <p class="subtitle">Real-time observability for YC and Antler portfolio scraping</p>
+        
+        <div class="controls">
+            <div class="input-group">
+                <label for="sessionId">Session ID:</label>
+                <input type="text" id="sessionId" placeholder="Enter session ID (e.g., demo-20240101120000)" value="">
+            </div>
+            <button id="connectBtn" onclick="connect()">Connect to Monitor</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+            <button onclick="triggerScrape()">Trigger New Scrape</button>
+        </div>
+
+        <div class="monitor" id="monitor" style="display: none;">
+            <div class="status">
+                <div class="status-indicator" id="statusIndicator"></div>
+                <span id="statusText">Disconnected</span>
+            </div>
+
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-label">Total Companies</div>
+                    <div class="stat-value" id="totalCompanies">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">YC Companies</div>
+                    <div class="stat-value" id="ycCompanies">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Antler Companies</div>
+                    <div class="stat-value" id="antlerCompanies">0</div>
+                </div>
+            </div>
+
+            <div class="screenshot-container" id="screenshotContainer">
+                <div style="color: #64748b;">Awaiting screenshot...</div>
+            </div>
+
+            <div class="event-log" id="eventLog">
+                <div class="event">
+                    <span class="event-time">--:--:--</span>
+                    <span class="event-type">INFO</span>
+                    <span class="event-message">Ready to connect. Enter a session ID and click Connect.</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let sessionId = '';
+
+        function updateStatus(status, text) {
+            const indicator = document.getElementById('statusIndicator');
+            const statusText = document.getElementById('statusText');
+            indicator.className = 'status-indicator ' + status;
+            statusText.textContent = text;
+        }
+
+        function addEvent(type, message, data = {}) {
+            const log = document.getElementById('eventLog');
+            const event = document.createElement('div');
+            event.className = 'event ' + (type === 'error' ? 'error' : type === 'complete' ? 'success' : '');
+            
+            const time = new Date().toLocaleTimeString();
+            event.innerHTML = `
+                <span class="event-time">${time}</span>
+                <span class="event-type">${type.toUpperCase()}</span>
+                <span class="event-message">${message}</span>
+            `;
+            
+            log.insertBefore(event, log.firstChild);
+            
+            // Keep only last 50 events
+            while (log.children.length > 50) {
+                log.removeChild(log.lastChild);
+            }
+        }
+
+        function updateStats(data) {
+            document.getElementById('totalCompanies').textContent = data.total_companies || 0;
+            document.getElementById('ycCompanies').textContent = data.yc_companies || 0;
+            document.getElementById('antlerCompanies').textContent = data.antler_companies || 0;
+        }
+
+        function updateScreenshot(base64Data) {
+            const container = document.getElementById('screenshotContainer');
+            container.innerHTML = `<img src="data:image/png;base64,${base64Data}" alt="Scraping Screenshot">`;
+        }
+
+        async function triggerScrape() {
+            const newSessionId = 'demo-' + Date.now();
+            document.getElementById('sessionId').value = newSessionId;
+            
+            addEvent('info', `Triggering scrape with session ID: ${newSessionId}`);
+            
+            try {
+                const response = await fetch('http://localhost:8000/companies/search/free-text', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        query: 'retrieve the YC and Antler portfolios',
+                        session_id: newSessionId
+                    })
+                });
+                
+                if (response.ok) {
+                    addEvent('success', 'Scrape triggered successfully! Connecting to monitor...');
+                    setTimeout(() => connect(), 1000);
+                } else {
+                    const error = await response.text();
+                    addEvent('error', `Failed to trigger scrape: ${error}`);
+                }
+            } catch (error) {
+                addEvent('error', `Error triggering scrape: ${error.message}`);
+            }
+        }
+
+        function connect() {
+            sessionId = document.getElementById('sessionId').value.trim();
+            
+            if (!sessionId) {
+                alert('Please enter a session ID');
+                return;
+            }
+
+            const wsUrl = `ws://localhost:8000/api/ws/portfolio-scraping/${sessionId}`;
+            
+            updateStatus('connecting', 'Connecting...');
+            addEvent('info', `Connecting to WebSocket: ${wsUrl}`);
+            
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                updateStatus('connected', 'Connected');
+                addEvent('success', 'WebSocket connected successfully');
+                document.getElementById('monitor').style.display = 'block';
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = false;
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('Received:', data);
+                    
+                    addEvent(data.type || 'info', data.message || 'Update received');
+                    
+                    if (data.total_companies !== undefined) {
+                        updateStats(data);
+                    }
+                    
+                    if (data.screenshot) {
+                        updateScreenshot(data.screenshot);
+                    }
+                } catch (error) {
+                    addEvent('error', `Error parsing message: ${error.message}`);
+                }
+            };
+
+            ws.onerror = (error) => {
+                updateStatus('', 'Error');
+                addEvent('error', 'WebSocket error occurred');
+                console.error('WebSocket error:', error);
+            };
+
+            ws.onclose = () => {
+                updateStatus('', 'Disconnected');
+                addEvent('info', 'WebSocket connection closed');
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('disconnectBtn').disabled = true;
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        // Auto-connect if session ID is in URL
+        window.addEventListener('load', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const sessionIdParam = urlParams.get('sessionId');
+            if (sessionIdParam) {
+                document.getElementById('sessionId').value = sessionIdParam;
+                setTimeout(() => connect(), 500);
+            }
+        });
+    </script>
+</body>
+</html>
+

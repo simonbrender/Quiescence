@@ -95,12 +95,16 @@ async def analyze_messaging(domain: str, company_name: str) -> Dict[str, float]:
     - Positioning consistency (title vs LinkedIn)
     - Jargon density
     """
-    from osint_sources import get_wayback_machine_snapshots, get_linkedin_company_data
+    from osint_sources import get_wayback_machine_snapshots, get_linkedin_company_data, fetch_homepage_with_crawl4ai
     
     async with aiohttp.ClientSession() as session:
         # Try to fetch homepage
         homepage_url = f"https://{domain}" if not domain.startswith('http') else domain
         content = await fetch_url(session, homepage_url)
+        
+        # If simple HTTP fetch fails, try crawl4ai for JavaScript-heavy sites
+        if not content:
+            content = await fetch_homepage_with_crawl4ai(homepage_url)
         
         if not content:
             return {

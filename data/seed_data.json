@@ -1,0 +1,98 @@
+{
+  "vcs": [
+    {
+      "firm_name": "Y Combinator",
+      "stage": "Pre-Seed/Seed",
+      "url": "https://www.ycombinator.com/companies",
+      "type": "Accelerator",
+      "portfolio_url_pattern": "https://www.ycombinator.com/companies?batch={batch}"
+    },
+    {
+      "firm_name": "First Round Capital",
+      "stage": "Seed",
+      "url": "https://firstround.com/companies",
+      "type": "VC"
+    },
+    {
+      "firm_name": "NFX",
+      "stage": "Seed",
+      "url": "https://www.nfx.com",
+      "type": "VC",
+      "portfolio_url": "https://www.nfx.com"
+    },
+    {
+      "firm_name": "Precursor Ventures",
+      "stage": "Pre-Seed/Seed",
+      "url": "https://www.precursorvc.com/portfolio",
+      "type": "VC"
+    },
+    {
+      "firm_name": "Techstars",
+      "stage": "Pre-Seed/Seed",
+      "url": "https://www.techstars.com/portfolio",
+      "type": "Accelerator"
+    },
+    {
+      "firm_name": "Atomic",
+      "stage": "Pre-Seed/Seed",
+      "url": "https://atomic.vc/portfolio",
+      "type": "Studio"
+    },
+    {
+      "firm_name": "Antler",
+      "stage": "Pre-Seed/Seed",
+      "url": "https://www.antler.co/portfolio",
+      "type": "Accelerator"
+    },
+    {
+      "firm_name": "Entrepreneur First",
+      "stage": "Pre-Seed/Seed",
+      "url": "https://www.joinef.com/portfolio",
+      "type": "Accelerator"
+    },
+    {
+      "firm_name": "Andreessen Horowitz",
+      "stage": "Series A",
+      "url": "https://a16z.com/portfolio/",
+      "type": "VC",
+      "alias": "a16z"
+    },
+    {
+      "firm_name": "Sequoia Capital",
+      "stage": "Series A",
+      "url": "https://www.sequoia.com/companies",
+      "type": "VC"
+    },
+    {
+      "firm_name": "Benchmark",
+      "stage": "Series A",
+      "url": "https://www.benchmark.com/portfolio",
+      "type": "VC"
+    },
+    {
+      "firm_name": "Founders Fund",
+      "stage": "Series A",
+      "url": "https://foundersfund.com/portfolio",
+      "type": "VC"
+    },
+    {
+      "firm_name": "Lightspeed Venture Partners",
+      "stage": "Series A",
+      "url": "https://lsvp.com/portfolio",
+      "type": "VC"
+    },
+    {
+      "firm_name": "Craft Ventures",
+      "stage": "Series A",
+      "url": "https://craftventures.com/portfolio",
+      "type": "VC"
+    },
+    {
+      "firm_name": "SignalFire",
+      "stage": "Series A",
+      "url": "https://signalfire.com/portfolio",
+      "type": "VC"
+    }
+  ]
+}
+

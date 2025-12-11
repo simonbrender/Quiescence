@@ -187,3 +187,5 @@ LinkedIn API requires OAuth2 authentication:
 - [ ] Implement batch scanning for YC companies
 - [ ] Add export functionality (CSV, JSON)
 
+
+

@@ -22,20 +22,22 @@ function RadarChartComponent({ messaging, motion, market, size = 200 }) {
   // Determine color based on average score
   const avgScore = (messaging + motion + market) / 3
   const getColor = () => {
-    if (avgScore >= 60) return '#22c55e' // green
-    if (avgScore >= 40) return '#eab308' // yellow
-    return '#ef4444' // red
+    if (avgScore >= 60) return '#34d399' // green-400
+    if (avgScore >= 40) return '#fbbf24' // yellow-400
+    return '#f87171' // red-400
   }
+
+  const color = getColor()
 
   return (
     <div style={{ width: size, height: size, margin: '0 auto' }}>
       <ResponsiveContainer width="100%" height="100%">
         <RadarChart data={data}>
-          <PolarGrid stroke="#1e293b" />
+          <PolarGrid stroke="rgba(6, 182, 212, 0.2)" />
           <PolarAngleAxis
             dataKey="subject"
-            tick={{ fill: '#94a3b8', fontSize: 10 }}
-            tickLine={{ stroke: '#475569' }}
+            tick={{ fill: 'rgba(255, 255, 255, 0.8)', fontSize: 11, fontWeight: 500 }}
+            tickLine={{ stroke: 'rgba(6, 182, 212, 0.3)' }}
           />
           <PolarRadiusAxis
             angle={90}
@@ -46,9 +48,9 @@ function RadarChartComponent({ messaging, motion, market, size = 200 }) {
           <Radar
             name="Score"
             dataKey="score"
-            stroke={getColor()}
-            fill={getColor()}
-            fillOpacity={0.3}
+            stroke={color}
+            fill={color}
+            fillOpacity={0.25}
             strokeWidth={2}
           />
         </RadarChart>
@@ -58,6 +60,3 @@ function RadarChartComponent({ messaging, motion, market, size = 200 }) {
 }
 
 export default RadarChartComponent
-
-
-

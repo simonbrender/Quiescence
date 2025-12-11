@@ -8,4 +8,7 @@ aiohttp>=3.9.0
 python-dotenv>=1.0.0
 textstat>=0.7.3
 lxml>=4.9.0
+crawl4ai>=0.3.0
+playwright>=1.40.0
+ollama>=0.1.0
 

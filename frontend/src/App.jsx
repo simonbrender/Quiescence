@@ -1,10 +1,14 @@
 import { useState, useEffect } from 'react'
-import { Search, Filter, TrendingUp, AlertTriangle, CheckCircle, XCircle, Sparkles } from 'lucide-react'
+import { Search, Filter, TrendingUp, AlertTriangle, CheckCircle, XCircle, Sparkles, Building2, ArrowRight } from 'lucide-react'
 import CompanyCard from './components/CompanyCard'
 import RadarChart from './components/RadarChart'
 import StatsPanel from './components/StatsPanel'
 import CompanyDetail from './components/CompanyDetail'
+import PortfolioSelector from './components/PortfolioSelector'
+import AdvancedSearch from './components/AdvancedSearch'
 import { getCompanies, getStats, scanCompany } from './services/api'
+import { Button } from './components/ui/button'
+import { Card } from './components/ui/card'
 
 function App() {
   const [companies, setCompanies] = useState([])
@@ -14,12 +18,16 @@ function App() {
   const [selectedCompany, setSelectedCompany] = useState(null)
   const [scanInput, setScanInput] = useState('')
   const [scanError, setScanError] = useState('')
+  const [showPortfolioSelector, setShowPortfolioSelector] = useState(false)
+  const [showAdvancedSearch, setShowAdvancedSearch] = useState(false)
+  const [searchResults, setSearchResults] = useState(null)
+  const [searchQuery, setSearchQuery] = useState(null)
   const [filters, setFilters] = useState({
     ycBatch: '',
     source: '',
     vector: '',
     search: '',
-    excludeMock: true  // Hide mock data by default
+    excludeMock: true
   })
 
   useEffect(() => {
@@ -52,14 +60,11 @@ function App() {
     setScanning(true)
     setScanError('')
     try {
-      console.log('Scanning company:', trimmedUrl)
       const result = await scanCompany(trimmedUrl)
-      console.log('Scan result:', result)
       setScanInput('')
       await loadData()
       setSelectedCompany(result)
     } catch (error) {
-      console.error('Error scanning company:', error)
       const errorMessage = error.response?.data?.detail || error.message || 'Error scanning company. Please check the URL and try again.'
       setScanError(errorMessage)
     } finally {
@@ -69,8 +74,6 @@ function App() {
 
   const handleScanSubmit = (e) => {
     e.preventDefault()
-    e.stopPropagation()
-    console.log('Form submitted with input:', scanInput)
     if (scanInput.trim()) {
       handleScan(scanInput)
     } else {
@@ -78,241 +81,323 @@ function App() {
     }
   }
 
+  const handlePortfolioScrapeComplete = async (results) => {
+    await loadData()
+  }
+
+  const handleSearchComplete = (results, query) => {
+    setSearchResults(results)
+    setSearchQuery(query)
+    setShowAdvancedSearch(false)
+  }
+
+  const handleNewSearch = () => {
+    setSearchResults(null)
+    setSearchQuery(null)
+    setShowAdvancedSearch(true)
+  }
+
+  // If search results are available, show full-page results view
+  if (searchResults && searchResults.length > 0) {
+    return (
+      <AdvancedSearch
+        onCompanySelect={setSelectedCompany}
+        onSearchComplete={handleSearchComplete}
+        initialResults={searchResults}
+        initialQuery={searchQuery}
+      />
+    )
+  }
+
   return (
-    <div className="min-h-screen bg-background celerio-content">
-      {/* Header */}
-      <header className="border-b border-border/30 bg-background/80 backdrop-blur-sm sticky top-0 z-50 celerio-content">
-        <div className="container mx-auto px-6 py-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-8">
-              {/* Celerio Scout Logo */}
-              <div>
-                <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-                  <span className="text-foreground">Celer</span>
-                  <span className="text-primary">io</span>
-                  <span className="text-foreground"> Scout</span>
-                </h1>
-                <p className="text-sm text-muted-foreground mt-1">
-                  OSINT-Powered Startup Stall Detection
-                </p>
-              </div>
-            </div>
-            <nav className="hidden md:flex items-center gap-6">
-              <a href="#" className="text-sm text-foreground hover:text-primary transition-colors">Expertise</a>
-              <a href="#" className="text-sm text-foreground hover:text-primary transition-colors">Insights</a>
-              <a href="#" className="text-sm text-foreground hover:text-primary transition-colors">Impact</a>
-              <button className="px-4 py-2 bg-foreground text-background rounded-lg text-sm font-medium hover:bg-foreground/90 transition-colors">
-                Start Conversation
-              </button>
-            </nav>
-          </div>
-        </div>
-      </header>
+    <div className="min-h-screen" style={{ backgroundColor: '#0A1628' }}>
+      {/* Grid Background */}
+      <div className="fixed inset-0 grid-pattern opacity-20" />
 
-      {/* Hero Scan Section */}
-      <section className="border-b border-border/30 bg-background celerio-content">
-        <div className="container mx-auto px-6 py-16">
-          <div className="max-w-3xl mx-auto text-center">
-            <div className="inline-flex items-center justify-center w-12 h-12 mb-6 rounded-lg bg-primary/10 border border-primary/20">
-              <svg className="w-6 h-6 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-            </div>
-            <h2 className="text-4xl font-semibold text-foreground mb-4">
-              Analyze Startup Health
-            </h2>
-            <p className="text-muted-foreground mb-10 text-lg">
-              Enter a company domain to analyze their 3M Revenue Architecture vectors
-            </p>
-            <form onSubmit={handleScanSubmit} className="flex gap-3 max-w-2xl mx-auto">
-              <div className="flex-1 relative">
-                <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-muted-foreground w-5 h-5 top-1/2 left-4" />
-                <input
-                  type="text"
-                  placeholder="Enter company domain (e.g., langdb.ai)"
-                  className="w-full pl-12 pr-4 py-3.5 bg-card border border-border rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all text-base"
-                  value={scanInput}
-                  onChange={(e) => {
-                    setScanInput(e.target.value)
-                    setScanError('')
-                  }}
-                  disabled={scanning}
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={scanning || !scanInput.trim()}
-                className="px-8 py-3.5 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg shadow-primary/20"
-              >
-                {scanning ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary-foreground/30 border-t-primary-foreground"></div>
-                    Analyzing...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    Analyze
-                  </>
-                )}
-              </button>
-            </form>
-            {scanError && (
-              <p className="text-red-500 text-sm mt-3">{scanError}</p>
-            )}
-          </div>
-        </div>
-      </section>
+      {/* Gradient Orb Effects */}
+      <div
+        className="fixed top-20 left-20 w-96 h-96 rounded-full blur-3xl opacity-15 animate-pulse-glow"
+        style={{ background: 'radial-gradient(circle, rgb(6, 182, 212) 0%, transparent 70%)' }}
+      />
+      <div
+        className="fixed bottom-20 right-20 w-96 h-96 rounded-full blur-3xl opacity-15 animate-pulse-glow"
+        style={{ background: 'radial-gradient(circle, rgb(6, 182, 212) 0%, transparent 70%)' }}
+      />
 
-      <div className="container mx-auto px-6 py-12 celerio-content">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          {/* Sidebar */}
-          <aside className="lg:col-span-1">
-            <div className="celerio-card p-5 celerio-content">
-              <div className="flex items-center gap-2 mb-5">
-                <Filter className="w-4 h-4 text-primary" />
-                <h2 className="text-base font-semibold text-foreground">Filters</h2>
-              </div>
-
-              <div className="space-y-4">
+      <div className="relative z-10">
+        {/* Header */}
+        <header className="border-b border-cyan-400/20 backdrop-blur-sm sticky top-0 z-50" style={{ backgroundColor: 'oklch(0.18 0.02 240 / 0.4)' }}>
+          <div className="container mx-auto px-6 py-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-8">
                 <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">
-                    YC Batch
-                  </label>
-                  <select
-                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all"
-                    value={filters.ycBatch}
-                    onChange={(e) => setFilters({ ...filters, ycBatch: e.target.value })}
-                  >
-                    <option value="">All Batches</option>
-                    <option value="W22">W22</option>
-                    <option value="S22">S22</option>
-                    <option value="W23">W23</option>
-                    <option value="S23">S23</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">
-                    Source
-                  </label>
-                  <select
-                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all"
-                    value={filters.source}
-                    onChange={(e) => setFilters({ ...filters, source: e.target.value })}
-                  >
-                    <option value="">All Sources</option>
-                    <option value="yc">Y Combinator</option>
-                    <option value="antler">Antler</option>
-                    <option value="github">GitHub</option>
-                    <option value="mock">Mock Data</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">
-                    Vector Weakness
-                  </label>
-                  <select
-                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all"
-                    value={filters.vector}
-                    onChange={(e) => setFilters({ ...filters, vector: e.target.value })}
-                  >
-                    <option value="">All Vectors</option>
-                    <option value="messaging">Messaging Issues</option>
-                    <option value="motion">Motion Issues</option>
-                    <option value="market">Market Issues</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* Stats Panel */}
-            {stats && <StatsPanel stats={stats} />}
-          </aside>
-
-          {/* Main Content */}
-          <main className="lg:col-span-3">
-            {loading ? (
-              <div className="flex items-center justify-center h-64">
-                <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary/20 border-t-primary"></div>
-              </div>
-            ) : companies.length === 0 ? (
-              <div className="text-center py-20">
-                <div className="max-w-md mx-auto">
-                  <Sparkles className="w-16 h-16 text-muted-foreground/30 mx-auto mb-4" />
-                  <h3 className="text-xl font-semibold text-foreground mb-2">
-                    No companies analyzed yet
-                  </h3>
-                  <p className="text-muted-foreground mb-6">
-                    Enter a company domain above to begin analyzing their 3M Revenue Architecture vectors.
+                  <h1 className="text-2xl font-semibold tracking-tight text-white">
+                    <span className="text-white">Celer</span>
+                    <span className="text-cyan-400">io</span>
+                    <span className="text-white"> Intervene</span>
+                  </h1>
+                  <p className="text-sm text-white/60 mt-1">
+                    Agentic Revenue Architecture
                   </p>
-                  <div className="text-sm text-muted-foreground space-y-1">
-                    <p>Try analyzing:</p>
-                    <div className="flex gap-2 justify-center flex-wrap">
-                      <button
-                        onClick={() => {
-                          setScanInput('langdb.ai')
-                          handleScan('langdb.ai')
-                        }}
-                        className="px-3 py-1.5 bg-card border border-border rounded text-primary hover:border-primary/50 transition-colors"
-                      >
-                        langdb.ai
-                      </button>
+                </div>
+              </div>
+              <nav className="hidden md:flex items-center gap-6">
+                <button 
+                  onClick={() => setShowAdvancedSearch(!showAdvancedSearch)}
+                  className="text-sm text-white/80 hover:text-cyan-400 transition-colors"
+                >
+                  Advanced Search
+                </button>
+                <button 
+                  onClick={() => setShowPortfolioSelector(!showPortfolioSelector)}
+                  className="text-sm text-white/80 hover:text-cyan-400 transition-colors"
+                >
+                  Portfolios
+                </button>
+                <Button
+                  size="sm"
+                  className="text-sm px-4 py-2 text-[#0A1628] font-semibold"
+                  style={{ backgroundColor: 'rgb(6, 182, 212)' }}
+                >
+                  Start Conversation
+                </Button>
+              </nav>
+            </div>
+          </div>
+        </header>
+
+        {/* Advanced Search Modal */}
+        {showAdvancedSearch && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 overflow-y-auto p-4">
+            <div className="max-w-7xl mx-auto py-8">
+              <Card className="glass-card border-cyan-400/30 p-6 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-2xl font-semibold text-white">Advanced Search</h2>
+                  <button
+                    onClick={() => setShowAdvancedSearch(false)}
+                    className="text-white/60 hover:text-white transition-colors"
+                  >
+                    <XCircle className="w-6 h-6" />
+                  </button>
+                </div>
+                <AdvancedSearch onCompanySelect={setSelectedCompany} />
+              </Card>
+            </div>
+          </div>
+        )}
+
+        {/* Portfolio Selector Modal */}
+        {showPortfolioSelector && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <Card className="glass-card border-cyan-400/30 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+              <div className="sticky top-0 glass-card border-b border-cyan-400/30 p-6 flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-white">Portfolio Scraper</h2>
+                <button
+                  onClick={() => setShowPortfolioSelector(false)}
+                  className="text-white/60 hover:text-white transition-colors"
+                >
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="p-6">
+                <PortfolioSelector onScrapeComplete={handlePortfolioScrapeComplete} />
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Hero Scan Section */}
+        <section className="border-b border-cyan-400/20">
+          <div className="container mx-auto px-6 py-16">
+            <div className="max-w-3xl mx-auto text-center space-y-6">
+              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass-card text-sm mb-4">
+                <Sparkles className="w-4 h-4 text-cyan-400" />
+                <span className="text-cyan-400">Enterprise Revenue Architecture</span>
+              </div>
+
+              <h2 className="text-5xl font-bold text-white leading-tight text-balance">
+                Analyze Startup <span className="text-glow-cyan text-cyan-400">Health</span>
+              </h2>
+              <p className="text-xl text-white/70 max-w-2xl mx-auto leading-relaxed text-pretty">
+                Enter a company domain to analyze their 3M Revenue Architecture vectors
+              </p>
+              <form onSubmit={handleScanSubmit} className="flex gap-3 max-w-2xl mx-auto mt-8">
+                <div className="flex-1 relative">
+                  <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-white/40 w-5 h-5" />
+                  <input
+                    type="text"
+                    placeholder="Enter company domain (e.g., langdb.ai)"
+                    className="w-full pl-12 pr-4 py-3.5 glass-card border border-cyan-400/30 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-cyan-400/50 focus:border-cyan-400/50 transition-all text-base bg-white/5"
+                    value={scanInput}
+                    onChange={(e) => {
+                      setScanInput(e.target.value)
+                      setScanError('')
+                    }}
+                    disabled={scanning}
+                  />
+                </div>
+                <Button
+                  type="submit"
+                  disabled={scanning || !scanInput.trim()}
+                  size="lg"
+                  className="text-lg px-8 py-3.5 text-[#0A1628] font-semibold"
+                  style={{ backgroundColor: 'rgb(6, 182, 212)' }}
+                >
+                  {scanning ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-[#0A1628]/30 border-t-[#0A1628]"></div>
+                      Analyzing...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      Analyze
+                    </>
+                  )}
+                </Button>
+              </form>
+              {scanError && (
+                <p className="text-red-400 text-sm mt-3">{scanError}</p>
+              )}
+            </div>
+          </div>
+        </section>
+
+        <div className="container mx-auto px-6 py-12">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            {/* Sidebar */}
+            <aside className="lg:col-span-1">
+              <Card className="glass-card border-cyan-400/30 p-5">
+                <div className="flex items-center gap-2 mb-5">
+                  <Filter className="w-4 h-4 text-cyan-400" />
+                  <h2 className="text-base font-semibold text-white">Filters</h2>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-medium text-white/60 mb-2 uppercase tracking-wide">
+                      YC Batch
+                    </label>
+                    <select
+                      className="w-full px-3 py-2 glass-card border border-cyan-400/30 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400/50 bg-white/5"
+                      value={filters.ycBatch}
+                      onChange={(e) => setFilters({ ...filters, ycBatch: e.target.value })}
+                    >
+                      <option value="">All Batches</option>
+                      <option value="W22">W22</option>
+                      <option value="S22">S22</option>
+                      <option value="W23">W23</option>
+                      <option value="S23">S23</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-white/60 mb-2 uppercase tracking-wide">
+                      Source
+                    </label>
+                    <select
+                      className="w-full px-3 py-2 glass-card border border-cyan-400/30 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400/50 bg-white/5"
+                      value={filters.source}
+                      onChange={(e) => setFilters({ ...filters, source: e.target.value })}
+                    >
+                      <option value="">All Sources</option>
+                      <option value="yc">Y Combinator</option>
+                      <option value="antler">Antler</option>
+                      <option value="github">GitHub</option>
+                      <option value="mock">Mock Data</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-white/60 mb-2 uppercase tracking-wide">
+                      Vector Weakness
+                    </label>
+                    <select
+                      className="w-full px-3 py-2 glass-card border border-cyan-400/30 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400/50 bg-white/5"
+                      value={filters.vector}
+                      onChange={(e) => setFilters({ ...filters, vector: e.target.value })}
+                    >
+                      <option value="">All Vectors</option>
+                      <option value="messaging">Messaging Issues</option>
+                      <option value="motion">Motion Issues</option>
+                      <option value="market">Market Issues</option>
+                    </select>
+                  </div>
+                </div>
+              </Card>
+
+              {/* Stats Panel */}
+              {stats && <StatsPanel stats={stats} />}
+            </aside>
+
+            {/* Main Content */}
+            <main className="lg:col-span-3">
+              {loading ? (
+                <div className="flex items-center justify-center h-64">
+                  <div className="animate-spin rounded-full h-8 w-8 border-2 border-cyan-400/20 border-t-cyan-400"></div>
+                </div>
+              ) : companies.length === 0 ? (
+                <div className="text-center py-20">
+                  <div className="max-w-md mx-auto">
+                    <Sparkles className="w-16 h-16 text-white/30 mx-auto mb-4" />
+                    <h3 className="text-xl font-semibold text-white mb-2">
+                      No companies analyzed yet
+                    </h3>
+                    <p className="text-white/60 mb-6">
+                      Enter a company domain above to begin analyzing their 3M Revenue Architecture vectors.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="mb-6 flex items-center justify-between">
+                    <h2 className="text-lg font-semibold text-white">
+                      Analyzed Companies <span className="text-white/60 font-normal">({companies.length})</span>
+                    </h2>
+                    <div className="relative w-64">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40 w-4 h-4" />
+                      <input
+                        type="text"
+                        placeholder="Search companies..."
+                        className="w-full pl-10 pr-4 py-2 glass-card border border-cyan-400/30 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-cyan-400/50 bg-white/5 text-sm"
+                        value={filters.search}
+                        onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                      />
                     </div>
                   </div>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="mb-6 flex items-center justify-between">
-                  <h2 className="text-lg font-semibold text-foreground">
-                    Analyzed Companies <span className="text-muted-foreground font-normal">({companies.length})</span>
-                  </h2>
-                  <div className="relative w-64">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
-                    <input
-                      type="text"
-                      placeholder="Search companies..."
-                      className="w-full pl-10 pr-4 py-2 bg-card border border-border rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all text-sm"
-                      value={filters.search}
-                      onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                    />
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {companies
+                      .filter(company => 
+                        !filters.search || 
+                        company.name.toLowerCase().includes(filters.search.toLowerCase()) ||
+                        company.domain.toLowerCase().includes(filters.search.toLowerCase())
+                      )
+                      .map((company) => (
+                        <CompanyCard
+                          key={company.id}
+                          company={company}
+                          onClick={() => setSelectedCompany(company)}
+                        />
+                      ))}
                   </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {companies
-                    .filter(company => 
-                      !filters.search || 
-                      company.name.toLowerCase().includes(filters.search.toLowerCase()) ||
-                      company.domain.toLowerCase().includes(filters.search.toLowerCase())
-                    )
-                    .map((company) => (
-                      <CompanyCard
-                        key={company.id}
-                        company={company}
-                        onClick={() => setSelectedCompany(company)}
-                      />
-                    ))}
-                </div>
-              </>
-            )}
-          </main>
+                </>
+              )}
+            </main>
+          </div>
         </div>
-      </div>
 
-      {/* Company Detail Drawer */}
-      {selectedCompany && (
-        <CompanyDetail
-          company={selectedCompany}
-          onClose={() => setSelectedCompany(null)}
-          onScan={handleScan}
-        />
-      )}
+        {/* Company Detail Drawer */}
+        {selectedCompany && (
+          <CompanyDetail
+            company={selectedCompany}
+            onClose={() => setSelectedCompany(null)}
+            onScan={handleScan}
+          />
+        )}
+      </div>
     </div>
   )
 }
 
 export default App
-

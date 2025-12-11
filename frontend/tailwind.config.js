@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: ['class'],
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
@@ -7,43 +8,66 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Celerio color palette - matching website design
-        border: "hsl(220, 13%, 18%)",
-        input: "hsl(220, 13%, 18%)",
-        ring: "hsl(160, 100%, 50%)", // Teal/light green accent
-        background: "hsl(220, 20%, 8%)",
-        foreground: "hsl(210, 20%, 98%)",
+        background: 'oklch(var(--background))',
+        foreground: 'oklch(var(--foreground))',
+        card: {
+          DEFAULT: 'oklch(var(--card))',
+          foreground: 'oklch(var(--card-foreground))',
+        },
+        popover: {
+          DEFAULT: 'oklch(var(--popover))',
+          foreground: 'oklch(var(--popover-foreground))',
+        },
         primary: {
-          DEFAULT: "hsl(160, 100%, 50%)", // Vibrant teal/light green
-          foreground: "hsl(220, 20%, 8%)", // Dark text on light background
+          DEFAULT: 'oklch(var(--primary))',
+          foreground: 'oklch(var(--primary-foreground))',
         },
         secondary: {
-          DEFAULT: "hsl(220, 13%, 18%)",
-          foreground: "hsl(210, 20%, 98%)",
+          DEFAULT: 'oklch(var(--secondary))',
+          foreground: 'oklch(var(--secondary-foreground))',
         },
         muted: {
-          DEFAULT: "hsl(220, 13%, 18%)",
-          foreground: "hsl(215, 16%, 70%)",
+          DEFAULT: 'oklch(var(--muted))',
+          foreground: 'oklch(var(--muted-foreground))',
         },
         accent: {
-          DEFAULT: "hsl(160, 100%, 50%)", // Teal accent
-          foreground: "hsl(220, 20%, 8%)",
+          DEFAULT: 'oklch(var(--accent))',
+          foreground: 'oklch(var(--accent-foreground))',
         },
-        card: {
-          DEFAULT: "hsl(220, 13%, 12%)",
-          foreground: "hsl(210, 20%, 98%)",
+        destructive: {
+          DEFAULT: 'oklch(var(--destructive))',
+          foreground: 'oklch(var(--destructive-foreground))',
         },
-      },
-      fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
+        border: 'oklch(var(--border))',
+        input: 'oklch(var(--input))',
+        ring: 'oklch(var(--ring))',
+        chart: {
+          '1': 'oklch(var(--chart-1))',
+          '2': 'oklch(var(--chart-2))',
+          '3': 'oklch(var(--chart-3))',
+          '4': 'oklch(var(--chart-4))',
+          '5': 'oklch(var(--chart-5))',
+        },
+        celerio: {
+          navy: 'oklch(var(--celerio-navy))',
+          cyan: 'oklch(var(--celerio-cyan))',
+          'cyan-bright': 'oklch(var(--celerio-cyan-bright))',
+          glass: 'oklch(var(--celerio-glass))',
+          'glass-border': 'oklch(var(--celerio-glass-border))',
+          gold: 'oklch(var(--celerio-gold))',
+          silver: 'oklch(var(--celerio-silver))',
+        },
       },
       borderRadius: {
-        lg: "0.5rem",
-        md: "calc(0.5rem - 2px)",
-        sm: "calc(0.5rem - 4px)",
+        lg: 'var(--radius)',
+        md: 'calc(var(--radius) - 2px)',
+        sm: 'calc(var(--radius) - 4px)',
+      },
+      fontFamily: {
+        sans: ['Geist', 'system-ui', 'sans-serif'],
+        mono: ['Geist Mono', 'monospace'],
       },
     },
   },
   plugins: [],
 }
-

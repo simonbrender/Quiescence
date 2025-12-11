@@ -20,13 +20,22 @@ Each company is scored on three vectors based on the Celerio Revenue Architectur
 
 ### Real OSINT Data Collection
 
-- **GitHub API**: Engineering activity, commit frequency, repository stars
+- **GitHub API**: Engineering activity, commit frequency, repository stars (with enhanced org detection)
 - **Reddit PRAW**: Social mentions and sentiment analysis
 - **SimilarWeb API**: Traffic data, global rankings, monthly visits
 - **Wayback Machine**: Historical H1 volatility, snapshot analysis
 - **LinkedIn API**: Company insights, employee count, industry data
 - **Web Scraping**: Careers page analysis, homepage messaging analysis
+  - Uses **Crawl4AI** for JavaScript-heavy sites (automatic fallback)
+  - Simple HTTP requests for standard sites
 - **Y Combinator**: Batch scraping for Series A Crunch cohort (W22, S22, W23, S23)
+- **VC Portfolio Scraping**: Antler, NFX, and other VC portfolios using Crawl4AI
+
+### Performance & Reliability
+
+- **Caching Layer**: In-memory cache with TTL to reduce API calls and improve response times
+- **Rate Limiting**: Token bucket algorithm prevents hitting API rate limits
+- **Graceful Fallbacks**: System continues to work even when APIs are unavailable
 
 ### Celerio Radar Visualization
 

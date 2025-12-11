@@ -36,18 +36,29 @@
 - Typography improvements for readability
 
 ### Technical
-- Removed `crawl4ai` dependency (not needed for MVP)
+- Re-added `crawl4ai` dependency for advanced web scraping (JavaScript-heavy sites)
 - Added `lxml` for better HTML parsing
 - Updated function signatures for consistency
 - Improved async/await patterns
+- Added in-memory caching layer with TTL support (`cache.py`)
+- Added token bucket rate limiter for API calls (`rate_limiter.py`)
+- Enhanced GitHub org detection with multiple heuristics
+- Added crawl4ai fallback for homepage scraping when simple HTTP fails
+- Implemented Antler portfolio scraping using crawl4ai
+
+### Completed (Previously Listed as Next Steps)
+- [x] Add SimilarWeb API integration for traffic data (implemented in `osint_sources.py`)
+- [x] Implement Wayback Machine API for H1 volatility tracking (implemented in `osint_sources.py`)
+- [x] Add caching layer for API responses (implemented in `cache.py` with TTL support)
+- [x] Implement rate limiting for API calls (implemented in `rate_limiter.py` with token bucket algorithm)
+- [x] Enhance GitHub org detection algorithms (multiple heuristics: domain name, suffix removal, camelCase conversion)
 
 ### Next Steps
-- [ ] Add SimilarWeb API integration for traffic data
-- [ ] Implement Wayback Machine API for H1 volatility tracking
-- [ ] Add LinkedIn API integration for positioning consistency
-- [ ] Enhance GitHub org detection algorithms
-- [ ] Add caching layer for API responses
-- [ ] Implement rate limiting for API calls
+- [ ] Add LinkedIn API integration for positioning consistency (placeholder exists, needs OAuth2 implementation)
+- [ ] Add cache statistics endpoint to API
+- [ ] Consider Redis for distributed caching in production
+- [ ] Add rate limit headers to API responses
+
 
 
 

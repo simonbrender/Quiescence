@@ -194,9 +194,57 @@ async def scrape_yc_companies(batches: List[str] = None) -> List[Dict]:
 async def scrape_antler_portfolio() -> List[Dict]:
     """
     Scrape Antler portfolio page for AI & B2B companies
+    Uses crawl4ai for JavaScript-heavy portfolio pages
     """
-    # Mock implementation - in production, use crawl4ai
-    return []
+    try:
+        from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+        from osint_sources import scrape_careers_page
+        from bs4 import BeautifulSoup
+        import re
+        
+        browser_config = BrowserConfig(headless=True, verbose=False)
+        crawler_config = CrawlerRunConfig(wait_for_images=False, process_iframes=False)
+        
+        companies = []
+        
+        async with AsyncWebCrawler(config=browser_config) as crawler:
+            # Antler portfolio URL
+            url = "https://www.antler.co/portfolio"
+            result = await crawler.arun(url=url, config=crawler_config)
+            
+            if result.success and result.html:
+                soup = BeautifulSoup(result.html, 'html.parser')
+                
+                # Look for company links/cards in Antler's structure
+                company_elements = soup.find_all(['a', 'div'], 
+                    class_=re.compile(r'company|portfolio|startup', re.I))
+                
+                for elem in company_elements[:50]:  # Limit to 50
+                    company_name = None
+                    
+                    # Extract company name
+                    name_elem = elem.find(['h1', 'h2', 'h3', 'h4', 'span'], 
+                        class_=re.compile(r'name|title', re.I))
+                    if name_elem:
+                        company_name = name_elem.get_text(strip=True)
+                    elif elem.name == 'a' and elem.get_text(strip=True):
+                        company_name = elem.get_text(strip=True)
+                    
+                    if company_name and len(company_name) > 2:
+                        companies.append({
+                            'name': company_name,
+                            'domain': company_name.lower().replace(' ', '') + '.com',  # Fallback
+                            'source': 'antler',
+                            'yc_batch': ''
+                        })
+        
+        return companies
+    except ImportError:
+        # crawl4ai not available, return empty list
+        return []
+    except Exception as e:
+        print(f"Error scraping Antler portfolio: {e}")
+        return []
 
 async def scrape_github_topics(topics: List[str] = None) -> List[Dict]:
     """

@@ -1,0 +1,5 @@
+crawl4ai>=0.3.0
+beautifulsoup4>=4.12.3
+lxml>=4.9.0
+
+
