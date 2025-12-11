@@ -362,15 +362,59 @@ class VCDiscovery:
         """Discover VCs from all sources"""
         all_vcs = []
         
-        # Discover from various sources
-        vc_lists = await self.discover_from_vc_lists()
-        all_vcs.extend(vc_lists)
+        print("\n" + "="*80)
+        print("VC DISCOVERY - Starting comprehensive discovery")
+        print("="*80 + "\n")
         
-        # Categorize each VC
+        # Discover from various sources
+        try:
+            vc_lists = await self.discover_from_vc_lists()
+            all_vcs.extend(vc_lists)
+            print(f"[SUCCESS] Discovered {len(vc_lists)} VCs from web sources")
+        except Exception as e:
+            print(f"[ERROR] Error in discover_from_vc_lists: {e}")
+            print("[INFO] Continuing with known VC list fallback...")
+        
+        # Ensure we have at least some VCs (fallback to known list)
+        if len(all_vcs) < 5:
+            print("[INFO] Adding known VC firms as fallback...")
+            known_vcs = [
+                {'firm_name': 'Accel', 'url': 'https://www.accel.com/', 'domain': 'accel.com', 'discovered_from': 'known_list', 'type': 'VC'},
+                {'firm_name': 'Greylock Partners', 'url': 'https://www.greylock.com/', 'domain': 'greylock.com', 'discovered_from': 'known_list', 'type': 'VC'},
+                {'firm_name': 'Index Ventures', 'url': 'https://www.indexventures.com/', 'domain': 'indexventures.com', 'discovered_from': 'known_list', 'type': 'VC'},
+                {'firm_name': 'General Catalyst', 'url': 'https://www.generalcatalyst.com/', 'domain': 'generalcatalyst.com', 'discovered_from': 'known_list', 'type': 'VC'},
+                {'firm_name': 'Insight Partners', 'url': 'https://www.insightpartners.com/', 'domain': 'insightpartners.com', 'discovered_from': 'known_list', 'type': 'VC'},
+                {'firm_name': 'Bessemer Venture Partners', 'url': 'https://www.bvp.com/', 'domain': 'bvp.com', 'discovered_from': 'known_list', 'type': 'VC'},
+                {'firm_name': 'GV (Google Ventures)', 'url': 'https://www.gv.com/', 'domain': 'gv.com', 'discovered_from': 'known_list', 'type': 'VC'},
+                {'firm_name': 'Khosla Ventures', 'url': 'https://www.khoslaventures.com/', 'domain': 'khoslaventures.com', 'discovered_from': 'known_list', 'type': 'VC'},
+                {'firm_name': 'NEA', 'url': 'https://www.nea.com/', 'domain': 'nea.com', 'discovered_from': 'known_list', 'type': 'VC'},
+                {'firm_name': 'Redpoint Ventures', 'url': 'https://www.redpoint.com/', 'domain': 'redpoint.com', 'discovered_from': 'known_list', 'type': 'VC'},
+            ]
+            seen_names = {vc.get('firm_name', '').lower() for vc in all_vcs}
+            for vc in known_vcs:
+                if vc['firm_name'].lower() not in seen_names:
+                    all_vcs.append(vc)
+                    seen_names.add(vc['firm_name'].lower())
+        
+        # Categorize each VC (with error handling)
+        print(f"\n[Categorizing {len(all_vcs)} VCs...]")
         categorized_vcs = []
-        for vc in all_vcs:
-            categorized = await self.categorize_vc(vc)
-            categorized_vcs.append(categorized)
+        for idx, vc in enumerate(all_vcs):
+            try:
+                categorized = await self.categorize_vc(vc)
+                categorized_vcs.append(categorized)
+                if (idx + 1) % 10 == 0:
+                    print(f"  Categorized {idx + 1}/{len(all_vcs)} VCs...")
+            except Exception as e:
+                print(f"  [WARN] Error categorizing {vc.get('firm_name', 'Unknown')}: {e}")
+                # Add with defaults
+                vc.setdefault('stage', 'Unknown')
+                vc.setdefault('focus_areas', [])
+                vc.setdefault('type', 'VC')
+                categorized_vcs.append(vc)
+        
+        print(f"\n[SUCCESS] Discovery complete: {len(categorized_vcs)} VCs discovered and categorized")
+        print("="*80 + "\n")
         
         return categorized_vcs
 
