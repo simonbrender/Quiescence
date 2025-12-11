@@ -2312,6 +2312,59 @@ async def load_seed_vcs():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class DiscoverySourceRequest(BaseModel):
+    name: str
+    url: str
+    source_type: str = "VC"
+    discovery_method: str = "scrape"
+    priority: int = 100
+    enabled: bool = True
+    config: Optional[Dict] = {}
+
+class DiscoverySourceUpdate(BaseModel):
+    name: Optional[str] = None
+    url: Optional[str] = None
+    source_type: Optional[str] = None
+    discovery_method: Optional[str] = None
+    priority: Optional[int] = None
+    enabled: Optional[bool] = None
+    config: Optional[Dict] = None
+
+@app.get("/discovery/sources")
+async def get_discovery_sources(enabled_only: bool = False):
+    """Get all discovery sources"""
+    sources = discovery_source_manager.get_all_sources(enabled_only=enabled_only)
+    return {"sources": sources}
+
+@app.post("/discovery/sources")
+async def add_discovery_source(source: DiscoverySourceRequest):
+    """Add a new discovery source"""
+    try:
+        source_dict = source.dict()
+        source_id = discovery_source_manager.add_source(source_dict)
+        return {"id": source_id, "message": "Source added successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.put("/discovery/sources/{source_id}")
+async def update_discovery_source(source_id: int, updates: DiscoverySourceUpdate):
+    """Update a discovery source"""
+    try:
+        updates_dict = {k: v for k, v in updates.dict().items() if v is not None}
+        discovery_source_manager.update_source(source_id, updates_dict)
+        return {"message": "Source updated successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/discovery/sources/{source_id}")
+async def delete_discovery_source(source_id: int):
+    """Delete a discovery source (user-added only)"""
+    try:
+        discovery_source_manager.delete_source(source_id)
+        return {"message": "Source deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 @app.post("/portfolios/discover")
 async def discover_vcs():
     """Discover new VCs from web sources"""

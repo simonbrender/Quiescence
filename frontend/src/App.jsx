@@ -293,6 +293,26 @@ function App() {
           </div>
         )}
 
+        {/* Discovery Sources Modal */}
+        {showDiscoverySources && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <Card className="glass-card border-cyan-400/30 max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+              <div className="sticky top-0 glass-card border-b border-cyan-400/30 p-6 flex items-center justify-between bg-white/5 backdrop-blur-sm">
+                <h2 className="text-xl font-semibold text-white">Discovery Sources</h2>
+                <button
+                  onClick={() => setShowDiscoverySources(false)}
+                  className="text-white/60 hover:text-white transition-colors"
+                >
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="overflow-y-auto flex-1">
+                <DiscoverySourcesManager />
+              </div>
+            </Card>
+          </div>
+        )}
+
         {/* Hero Scan Section */}
         <section className="border-b border-cyan-400/20">
           <div className="container mx-auto px-6 py-16">
