@@ -76,42 +76,20 @@ function PortfolioSelector({ onScrapeComplete }) {
   const handleDiscover = async () => {
     setDiscovering(true)
     setError('')
-    try {
-      const result = await discoverVCs()
-      await loadPortfolios()
-      alert(`Discovered ${result.discovered} VCs, added ${result.added} new ones`)
-    } catch (err) {
-      console.error('VC discovery error:', err)
-      console.error('Error details:', {
-        message: err.message,
-        code: err.code,
-        response: err.response?.data,
-        status: err.response?.status
-      })
-      
-      // Extract error message
-      let errorMessage = 'Failed to discover VCs'
-      if (err.message) {
-        errorMessage = err.message
-      } else if (err.response?.data?.detail) {
-        errorMessage = err.response.data.detail
-      } else if (err.response?.statusText) {
-        errorMessage = `Discovery failed: ${err.response.statusText}`
-      }
-      
-      setError(errorMessage)
-      
-      // Show more detailed error in console for debugging
-      if (err.code === 'ECONNREFUSED' || err.message?.includes('refused')) {
-        console.error('Backend server is not running. Start it with: python backend/main.py')
-      } else if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
-        console.error('Discovery request timed out. This operation can take several minutes.')
-      } else if (err.message === 'Network Error') {
-        console.error('Network error detected. Check if backend is running.')
-      }
-    } finally {
-      setDiscovering(false)
-    }
+    setShowDiscoveryProgress(true)
+    // DiscoveryProgress component handles the SSE connection and shows progress
+  }
+
+  const handleDiscoveryComplete = async (result) => {
+    setDiscovering(false)
+    setShowDiscoveryProgress(false)
+    await loadPortfolios()
+    // Results are shown in the progress modal, no alert needed
+  }
+
+  const handleDiscoveryClose = () => {
+    setShowDiscoveryProgress(false)
+    setDiscovering(false)
   }
 
   const handleAddVC = (newVC) => {
