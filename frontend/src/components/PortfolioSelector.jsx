@@ -16,6 +16,7 @@ function PortfolioSelector({ onScrapeComplete }) {
   const [error, setError] = useState('')
   const [showAddForm, setShowAddForm] = useState(false)
   const [discovering, setDiscovering] = useState(false)
+  const [showDiscoveryProgress, setShowDiscoveryProgress] = useState(false)
   const [filters, setFilters] = useState({
     stage: '',
     focus_area: '',
