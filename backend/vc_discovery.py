@@ -358,27 +358,209 @@ class VCDiscovery:
         
         return 'VC'
     
+    async def discover_from_crunchbase_comprehensive(self) -> List[Dict]:
+        """Comprehensive Crunchbase discovery - multiple pages"""
+        discovered = []
+        seen_firms = set()
+        
+        # Crunchbase VC directory pages (multiple pages for comprehensive coverage)
+        base_url = "https://www.crunchbase.com/discover/organization.companies/venture_capital"
+        pages_to_scrape = 10  # Start with 10 pages, can expand
+        
+        print(f"[CRUNCHBASE] Starting comprehensive discovery ({pages_to_scrape} pages)...")
+        
+        if CRAWL4AI_AVAILABLE:
+            try:
+                browser_config = BrowserConfig(headless=True, verbose=False)
+                crawler_config = CrawlerRunConfig(
+                    wait_for_images=False,
+                    process_iframes=False,
+                    wait_for="networkidle",
+                    page_timeout=30000,
+                    wait_for_timeout=30000
+                )
+                
+                async with AsyncWebCrawler(config=browser_config) as crawler:
+                    for page in range(1, pages_to_scrape + 1):
+                        try:
+                            url = f"{base_url}?page={page}" if page > 1 else base_url
+                            print(f"  [Page {page}/{pages_to_scrape}] Crawling {url}...")
+                            
+                            result = await crawler.arun(url=url, config=crawler_config)
+                            
+                            if result.success and result.html:
+                                soup = BeautifulSoup(result.html, 'html.parser')
+                                
+                                # Crunchbase structure: Look for organization links
+                                org_links = soup.find_all('a', href=re.compile(r'/organization/'))
+                                
+                                page_count = 0
+                                for link in org_links[:200]:  # Limit per page
+                                    firm_name = link.get_text(strip=True)
+                                    href = link.get('href', '')
+                                    
+                                    if firm_name and len(firm_name) > 2 and len(firm_name) < 100:
+                                        name_key = firm_name.lower().strip()
+                                        if name_key in seen_firms:
+                                            continue
+                                        seen_firms.add(name_key)
+                                        
+                                        if href.startswith('/'):
+                                            href = f"https://www.crunchbase.com{href}"
+                                        
+                                        domain = self._extract_domain(href)
+                                        
+                                        discovered.append({
+                                            'firm_name': firm_name,
+                                            'url': href,
+                                            'domain': domain,
+                                            'discovered_from': 'crunchbase',
+                                            'type': 'VC'
+                                        })
+                                        page_count += 1
+                                
+                                print(f"    Found {page_count} VCs on page {page}")
+                                
+                                if page_count == 0:
+                                    print(f"    [INFO] No VCs found on page {page}, stopping pagination")
+                                    break
+                            
+                            await asyncio.sleep(3)  # Rate limiting
+                            
+                        except RuntimeError as e:
+                            error_msg = str(e)
+                            if "Timeout" in error_msg:
+                                print(f"  [WARN] Timeout on page {page}, continuing...")
+                            else:
+                                print(f"  [ERROR] Error on page {page}: {error_msg[:200]}")
+                            continue
+                        except Exception as e:
+                            print(f"  [ERROR] Error crawling page {page}: {e}")
+                            continue
+            
+            except Exception as e:
+                print(f"[ERROR] Crunchbase discovery error: {e}")
+        
+        print(f"[CRUNCHBASE] Discovered {len(discovered)} VCs total")
+        return discovered
+    
+    async def discover_from_f6s_accelerators(self) -> List[Dict]:
+        """Discover Accelerators from F6S (largest accelerator database)"""
+        discovered = []
+        seen_firms = set()
+        
+        base_url = "https://www.f6s.com/accelerators"
+        pages_to_scrape = 20  # F6S has many pages
+        
+        print(f"[F6S] Starting accelerator discovery ({pages_to_scrape} pages)...")
+        
+        if CRAWL4AI_AVAILABLE:
+            try:
+                browser_config = BrowserConfig(headless=True, verbose=False)
+                crawler_config = CrawlerRunConfig(
+                    wait_for_images=False,
+                    process_iframes=False,
+                    wait_for="networkidle",
+                    page_timeout=30000
+                )
+                
+                async with AsyncWebCrawler(config=browser_config) as crawler:
+                    for page in range(1, pages_to_scrape + 1):
+                        try:
+                            url = f"{base_url}?page={page}" if page > 1 else base_url
+                            print(f"  [Page {page}/{pages_to_scrape}] Crawling {url}...")
+                            
+                            result = await crawler.arun(url=url, config=crawler_config)
+                            
+                            if result.success and result.html:
+                                soup = BeautifulSoup(result.html, 'html.parser')
+                                
+                                # F6S structure: Look for accelerator links
+                                accelerator_links = soup.find_all('a', href=re.compile(r'/accelerator/|/program/'))
+                                
+                                page_count = 0
+                                for link in accelerator_links[:100]:
+                                    firm_name = link.get_text(strip=True)
+                                    href = link.get('href', '')
+                                    
+                                    if firm_name and len(firm_name) > 2:
+                                        name_key = firm_name.lower().strip()
+                                        if name_key in seen_firms:
+                                            continue
+                                        seen_firms.add(name_key)
+                                        
+                                        if href.startswith('/'):
+                                            href = f"https://www.f6s.com{href}"
+                                        
+                                        domain = self._extract_domain(href)
+                                        
+                                        discovered.append({
+                                            'firm_name': firm_name,
+                                            'url': href,
+                                            'domain': domain,
+                                            'discovered_from': 'f6s',
+                                            'type': 'Accelerator'
+                                        })
+                                        page_count += 1
+                                
+                                print(f"    Found {page_count} accelerators on page {page}")
+                                
+                                if page_count == 0:
+                                    break
+                            
+                            await asyncio.sleep(2)
+                            
+                        except Exception as e:
+                            print(f"  [ERROR] Error on page {page}: {e}")
+                            continue
+            
+            except Exception as e:
+                print(f"[ERROR] F6S discovery error: {e}")
+        
+        print(f"[F6S] Discovered {len(discovered)} accelerators total")
+        return discovered
+    
     async def discover_all(self) -> List[Dict]:
-        """Discover VCs from all sources"""
+        """Discover VCs from all sources - COMPREHENSIVE"""
         all_vcs = []
         
         print("\n" + "="*80)
-        print("VC DISCOVERY - Starting comprehensive discovery")
+        print("COMPREHENSIVE VC DISCOVERY - ALL INVESTMENT VEHICLES")
         print("="*80 + "\n")
         
-        # Discover from various sources
+        # Layer 1: Crunchbase (VCs) - Comprehensive
         try:
+            print("[LAYER 1] Crunchbase VC Discovery...")
+            crunchbase_vcs = await self.discover_from_crunchbase_comprehensive()
+            all_vcs.extend(crunchbase_vcs)
+            print(f"[SUCCESS] Crunchbase: {len(crunchbase_vcs)} VCs\n")
+        except Exception as e:
+            print(f"[ERROR] Crunchbase discovery failed: {e}\n")
+        
+        # Layer 2: F6S (Accelerators) - Comprehensive
+        try:
+            print("[LAYER 2] F6S Accelerator Discovery...")
+            f6s_accelerators = await self.discover_from_f6s_accelerators()
+            all_vcs.extend(f6s_accelerators)
+            print(f"[SUCCESS] F6S: {len(f6s_accelerators)} Accelerators\n")
+        except Exception as e:
+            print(f"[ERROR] F6S discovery failed: {e}\n")
+        
+        # Layer 3: Existing VC lists discovery
+        try:
+            print("[LAYER 3] VC Directory Lists Discovery...")
             vc_lists = await self.discover_from_vc_lists()
             all_vcs.extend(vc_lists)
-            print(f"[SUCCESS] Discovered {len(vc_lists)} VCs from web sources")
+            print(f"[SUCCESS] Directories: {len(vc_lists)} investment vehicles\n")
         except Exception as e:
-            print(f"[ERROR] Error in discover_from_vc_lists: {e}")
-            print("[INFO] Continuing with known VC list fallback...")
+            print(f"[ERROR] Directory discovery failed: {e}\n")
         
-        # Ensure we have at least some VCs (fallback to known list)
-        if len(all_vcs) < 5:
-            print("[INFO] Adding known VC firms as fallback...")
+        # Layer 4: Known lists (fallback)
+        if len(all_vcs) < 50:
+            print("[LAYER 4] Known Lists Fallback...")
             known_vcs = [
+                {'firm_name': 'Sequoia Capital', 'url': 'https://www.sequoiacap.com/', 'domain': 'sequoiacap.com', 'discovered_from': 'known_list', 'type': 'VC'},
+                {'firm_name': 'Andreessen Horowitz', 'url': 'https://a16z.com/', 'domain': 'a16z.com', 'discovered_from': 'known_list', 'type': 'VC'},
                 {'firm_name': 'Accel', 'url': 'https://www.accel.com/', 'domain': 'accel.com', 'discovered_from': 'known_list', 'type': 'VC'},
                 {'firm_name': 'Greylock Partners', 'url': 'https://www.greylock.com/', 'domain': 'greylock.com', 'discovered_from': 'known_list', 'type': 'VC'},
                 {'firm_name': 'Index Ventures', 'url': 'https://www.indexventures.com/', 'domain': 'indexventures.com', 'discovered_from': 'known_list', 'type': 'VC'},
@@ -389,32 +571,43 @@ class VCDiscovery:
                 {'firm_name': 'Khosla Ventures', 'url': 'https://www.khoslaventures.com/', 'domain': 'khoslaventures.com', 'discovered_from': 'known_list', 'type': 'VC'},
                 {'firm_name': 'NEA', 'url': 'https://www.nea.com/', 'domain': 'nea.com', 'discovered_from': 'known_list', 'type': 'VC'},
                 {'firm_name': 'Redpoint Ventures', 'url': 'https://www.redpoint.com/', 'domain': 'redpoint.com', 'discovered_from': 'known_list', 'type': 'VC'},
+                {'firm_name': 'Y Combinator', 'url': 'https://www.ycombinator.com/', 'domain': 'ycombinator.com', 'discovered_from': 'known_list', 'type': 'Accelerator'},
+                {'firm_name': 'Techstars', 'url': 'https://www.techstars.com/', 'domain': 'techstars.com', 'discovered_from': 'known_list', 'type': 'Accelerator'},
+                {'firm_name': '500 Global', 'url': 'https://500.co/', 'domain': '500.co', 'discovered_from': 'known_list', 'type': 'Accelerator'},
+                {'firm_name': 'Atomic', 'url': 'https://atomic.vc/', 'domain': 'atomic.vc', 'discovered_from': 'known_list', 'type': 'Studio'},
+                {'firm_name': 'eFounders', 'url': 'https://www.efounders.com/', 'domain': 'efounders.com', 'discovered_from': 'known_list', 'type': 'Studio'},
             ]
             seen_names = {vc.get('firm_name', '').lower() for vc in all_vcs}
+            added_known = 0
             for vc in known_vcs:
                 if vc['firm_name'].lower() not in seen_names:
                     all_vcs.append(vc)
                     seen_names.add(vc['firm_name'].lower())
+                    added_known += 1
+            print(f"[SUCCESS] Known Lists: Added {added_known} from fallback\n")
         
         # Categorize each VC (with error handling)
-        print(f"\n[Categorizing {len(all_vcs)} VCs...]")
+        print(f"[CATEGORIZATION] Categorizing {len(all_vcs)} investment vehicles...")
         categorized_vcs = []
         for idx, vc in enumerate(all_vcs):
             try:
                 categorized = await self.categorize_vc(vc)
                 categorized_vcs.append(categorized)
-                if (idx + 1) % 10 == 0:
-                    print(f"  Categorized {idx + 1}/{len(all_vcs)} VCs...")
+                if (idx + 1) % 50 == 0:
+                    print(f"  Categorized {idx + 1}/{len(all_vcs)}...")
             except Exception as e:
-                print(f"  [WARN] Error categorizing {vc.get('firm_name', 'Unknown')}: {e}")
                 # Add with defaults
                 vc.setdefault('stage', 'Unknown')
                 vc.setdefault('focus_areas', [])
-                vc.setdefault('type', 'VC')
+                vc.setdefault('type', vc.get('type', 'VC'))
                 categorized_vcs.append(vc)
         
-        print(f"\n[SUCCESS] Discovery complete: {len(categorized_vcs)} VCs discovered and categorized")
-        print("="*80 + "\n")
+        print(f"\n{'='*80}")
+        print(f"[SUCCESS] Discovery complete: {len(categorized_vcs)} investment vehicles discovered")
+        print(f"  - VCs: {sum(1 for v in categorized_vcs if v.get('type') == 'VC')}")
+        print(f"  - Accelerators: {sum(1 for v in categorized_vcs if v.get('type') == 'Accelerator')}")
+        print(f"  - Studios: {sum(1 for v in categorized_vcs if v.get('type') == 'Studio')}")
+        print(f"{'='*80}\n")
         
         return categorized_vcs
 
