@@ -2316,13 +2316,34 @@ async def discover_vcs():
         discovered_vcs = await discovery.discover_all()
         
         added_count = 0
+        skipped_duplicates = 0
+        errors = 0
+        
         for vc in discovered_vcs:
             try:
-                # Check if VC already exists
+                firm_name = vc.get('firm_name', '').strip()
+                if not firm_name:
+                    continue
+                
+                # Check if VC already exists by firm_name (exact match)
                 existing = conn.execute(
-                    "SELECT id FROM vcs WHERE firm_name = ?",
-                    (vc['firm_name'],)
+                    "SELECT id, firm_name FROM vcs WHERE firm_name = ?",
+                    (firm_name,)
                 ).fetchone()
+                
+                # Also check by domain if available
+                domain = vc.get('domain', '').strip()
+                if not existing and domain:
+                    existing = conn.execute(
+                        "SELECT id, firm_name FROM vcs WHERE domain = ?",
+                        (domain,)
+                    ).fetchone()
+                
+                if existing:
+                    skipped_duplicates += 1
+                    if skipped_duplicates <= 5:  # Log first 5 duplicates
+                        print(f"  [SKIP] Duplicate: {firm_name} (exists as: {existing[1]})")
+                    continue
                 
                 if not existing:
                     focus_areas_json = json.dumps(vc.get('focus_areas', []))
@@ -2347,7 +2368,12 @@ async def discover_vcs():
                     ))
                     added_count += 1
             except Exception as e:
-                print(f"Error adding VC {vc.get('firm_name')}: {e}")
+                errors += 1
+                firm_name = vc.get('firm_name', 'Unknown')
+                print(f"  [ERROR] Error adding VC {firm_name}: {e}")
+                if errors <= 5:  # Log first 5 errors
+                    import traceback
+                    print(f"    Traceback: {traceback.format_exc()[:200]}")
                 continue
         
         conn.commit()
@@ -2355,7 +2381,9 @@ async def discover_vcs():
         return {
             "discovered": len(discovered_vcs),
             "added": added_count,
-            "message": f"Discovered {len(discovered_vcs)} VCs, added {added_count} new ones"
+            "skipped_duplicates": skipped_duplicates,
+            "errors": errors,
+            "message": f"Discovered {len(discovered_vcs)} VCs, added {added_count} new ones, skipped {skipped_duplicates} duplicates"
         }
     except Exception as e:
         import traceback
