@@ -597,10 +597,12 @@ async def advanced_search(request: AdvancedSearchRequest):
             # #endregion
             if stage_col_exists:
                 placeholders = ','.join(['?' for _ in request.stages])
-                # Use COALESCE to handle NULL values safely
-                query += f" AND (COALESCE(last_raise_stage, '') IN ({placeholders}) OR yc_batch IS NOT NULL)"
+                # Match exact stage OR companies with yc_batch (portfolio companies are typically Seed)
+                # Allow NULL stages if yc_batch exists (YC companies are typically Seed stage)
+                query += f" AND (last_raise_stage IN ({placeholders}) OR (yc_batch IS NOT NULL AND last_raise_stage IS NULL))"
                 params.extend(request.stages)
                 filters_applied = True
+                print(f"[ADVANCED-SEARCH] Applied stages filter: {request.stages} (including YC companies)")
                 # #region agent log
                 debug_log("main.py:571", "Using last_raise_stage in query", {"thread_id": threading.current_thread().ident}, "B")
                 # #endregion
@@ -631,11 +633,16 @@ async def advanced_search(request: AdvancedSearchRequest):
             if focus_col_exists:
                 focus_conditions = []
                 for focus in request.focus_areas:
-                    focus_conditions.append("COALESCE(focus_areas, '') LIKE ?")
-                    params.append(f"%{focus}%")
+                    # focus_areas is stored as JSON array like ["AI/ML", "B2B SaaS"]
+                    # Search for both JSON format and plain text
+                    # Also allow NULL/empty focus_areas to match (companies without focus data)
+                    focus_conditions.append("(focus_areas LIKE ? OR focus_areas LIKE ? OR focus_areas IS NULL OR focus_areas = '' OR focus_areas = '[]')")
+                    params.append(f'%"{focus}"%')  # JSON format: ["AI/ML"]
+                    params.append(f'%{focus}%')  # Plain text format
                 if focus_conditions:
                     query += " AND (" + " OR ".join(focus_conditions) + ")"
                     filters_applied = True
+                    print(f"[ADVANCED-SEARCH] Applied focus_areas filter: {request.focus_areas} (allowing NULL/empty)")
                 # #region agent log
                 debug_log("main.py:601", "Using focus_areas in query", {"thread_id": threading.current_thread().ident}, "B")
                 # #endregion
@@ -720,12 +727,22 @@ async def advanced_search(request: AdvancedSearchRequest):
     print(f"[ADVANCED-SEARCH] Final query: {query[:500]}")
     print(f"[ADVANCED-SEARCH] Query params: {params}")
     
-    # If no filters were applied, return empty result (don't return all companies)
+    # If no filters were applied, check if we should return companies anyway
+    # For portfolio queries or when only rank_by_stall is requested, return companies
     if not filters_applied:
-        print(f"[ADVANCED-SEARCH] WARNING: No filters applied, returning empty result to prevent returning all companies")
-        print(f"[ADVANCED-SEARCH] Request had: stages={request.stages}, focus_areas={request.focus_areas}, funding={request.funding_min}-{request.funding_max}, employees={request.employees_min}-{request.employees_max}")
-        print(f"[ADVANCED-SEARCH] This means none of the requested filters matched existing columns or had valid values")
-        return []
+        if request.rank_by_stall and not any([request.stages, request.focus_areas, request.funding_min, 
+                                               request.funding_max, request.employees_min, request.employees_max,
+                                               request.months_post_raise_min, request.months_post_raise_max, request.fund_tiers]):
+            # Only rank_by_stall requested - return all companies ranked by stall
+            print(f"[ADVANCED-SEARCH] Only rank_by_stall requested, returning all companies")
+            query = "SELECT * FROM companies WHERE 1=1"
+            params = []
+            filters_applied = True  # Allow query to proceed
+        else:
+            print(f"[ADVANCED-SEARCH] WARNING: No filters applied, returning empty result to prevent returning all companies")
+            print(f"[ADVANCED-SEARCH] Request had: stages={request.stages}, focus_areas={request.focus_areas}, funding={request.funding_min}-{request.funding_max}, employees={request.employees_min}-{request.employees_max}")
+            print(f"[ADVANCED-SEARCH] This means none of the requested filters matched existing columns or had valid values")
+            return []
     
     # Export query details for debugging
     print(f"[ADVANCED-SEARCH] Executing query: {query[:300]}...")
@@ -1273,6 +1290,66 @@ async def free_text_search(request: FreeTextSearchRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error parsing query: {str(e)}")
+
+@app.post("/companies/enrich")
+async def enrich_companies_endpoint():
+    """
+    Enrich all companies in the database with stage, focus areas, employees, and funding data.
+    This endpoint triggers batch enrichment of existing companies.
+    """
+    try:
+        import asyncio
+        from enrich_existing_companies import enrich_company_batch
+        
+        print("[ENRICH-API] Starting batch enrichment...")
+        
+        # Get all companies
+        companies = conn.execute("""
+            SELECT id, name, domain, source, yc_batch, last_raise_stage, 
+                   focus_areas, employee_count, funding_amount
+            FROM companies
+            ORDER BY created_at DESC
+        """).fetchall()
+        
+        columns = ['id', 'name', 'domain', 'source', 'yc_batch', 'last_raise_stage',
+                  'focus_areas', 'employee_count', 'funding_amount']
+        company_dicts = [dict(zip(columns, row)) for row in companies]
+        
+        total = len(company_dicts)
+        print(f"[ENRICH-API] Found {total} companies to enrich")
+        
+        # Run enrichment
+        enriched, updated = await enrich_company_batch(conn, company_dicts)
+        
+        # Get stats after enrichment
+        stats = conn.execute("""
+            SELECT COUNT(*) as total,
+                   COUNT(last_raise_stage) as with_stage,
+                   COUNT(CASE WHEN focus_areas IS NOT NULL AND focus_areas != '' AND focus_areas != '[]' THEN 1 END) as with_focus,
+                   COUNT(employee_count) as with_employees,
+                   COUNT(funding_amount) as with_funding
+            FROM companies
+        """).fetchone()
+        
+        return {
+            "status": "success",
+            "total_companies": total,
+            "enriched": enriched,
+            "updated": updated,
+            "stats": {
+                "total": stats[0],
+                "with_stage": stats[1],
+                "with_focus_areas": stats[2],
+                "with_employees": stats[3],
+                "with_funding": stats[4]
+            }
+        }
+    except Exception as e:
+        print(f"[ENRICH-API] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Enrichment error: {str(e)}")
+
 
 @app.post("/scan", response_model=CompanyResponse)
 async def scan_company_endpoint(request: ScanRequest):
