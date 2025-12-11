@@ -28,6 +28,12 @@ from discovery_sources import DiscoverySourceManager
 _portfolio_scraping_active = threading.Lock()
 _active_scraping_tasks = set()
 _scraping_in_progress = False
+
+# Global flag to prevent concurrent VC discovery
+_vc_discovery_in_progress = False
+_vc_discovery_start_time = None
+_vc_discovery_timeout = 600  # 10 minutes max for entire discovery
+_vc_discovery_lock = threading.Lock()
 try:
     from data_enrichment import enrich_company_data
 except ImportError:
@@ -2386,7 +2392,21 @@ async def _discover_vcs_with_progress():
     discovered_vcs = []
     
     try:
-        # Layer 1: Crunchbase
+        # Send initial stats
+        yield {
+            'type': 'stats',
+            'stats': {
+                'discovered': 0,
+                'added': 0,
+                'skipped': 0,
+                'errors': 0,
+                'vcs': 0,
+                'accelerators': 0,
+                'studios': 0
+            }
+        }
+        
+        # Layer 1: Crunchbase - RE-ENABLED with improved timeout handling
         current_layer += 1
         yield {
             'type': 'status',
@@ -2394,25 +2414,91 @@ async def _discover_vcs_with_progress():
             'layer': f'Layer {current_layer}/7: Crunchbase VC Discovery',
             'progress': int((current_layer / total_layers) * 50)
         }
+        yield {
+            'type': 'log',
+            'level': 'info',
+            'message': 'Starting Crunchbase discovery with improved timeout handling...'
+        }
         
         try:
-            crunchbase_vcs = await discovery.discover_from_crunchbase_comprehensive()
-            discovered_vcs.extend(crunchbase_vcs)
-            stats['discovered'] += len(crunchbase_vcs)
-            stats['vcs'] += len(crunchbase_vcs)
-            yield {
-                'type': 'log',
-                'level': 'success',
-                'message': f'Crunchbase: Found {len(crunchbase_vcs)} VCs'
-            }
+            # Add timeout to prevent hanging
+            import asyncio
+            try:
+                print("[DEBUG] Starting Crunchbase discovery with 120s timeout...")
+                crunchbase_vcs = await asyncio.wait_for(
+                    discovery.discover_from_crunchbase_comprehensive(),
+                    timeout=120.0  # 2 minute timeout for Crunchbase
+                )
+                print(f"[DEBUG] Crunchbase discovery completed, found {len(crunchbase_vcs)} VCs")
+                discovered_vcs.extend(crunchbase_vcs)
+                stats['discovered'] += len(crunchbase_vcs)
+                stats['vcs'] += len(crunchbase_vcs)
+                yield {
+                    'type': 'log',
+                    'level': 'success',
+                    'message': f'Crunchbase: Found {len(crunchbase_vcs)} VCs'
+                }
+                yield {
+                    'type': 'stats',
+                    'stats': {
+                        'discovered': stats['discovered'],
+                        'vcs': stats['vcs'],
+                        'accelerators': stats['accelerators'],
+                        'studios': stats['studios']
+                    }
+                }
+            except asyncio.TimeoutError:
+                print("[WARN] Crunchbase discovery timed out after 2 minutes")
+                stats['errors'] += 1
+                yield {
+                    'type': 'log',
+                    'level': 'warn',
+                    'message': 'Crunchbase discovery timed out after 2 minutes. Skipping to next layer...'
+                }
+                yield {
+                    'type': 'stats',
+                    'stats': {
+                        'discovered': stats['discovered'],
+                        'errors': stats['errors']
+                    }
+                }
+            except Exception as timeout_err:
+                import traceback
+                error_details = traceback.format_exc()
+                print(f"[ERROR] Exception in Crunchbase timeout wrapper: {error_details}")
+                stats['errors'] += 1
+                yield {
+                    'type': 'log',
+                    'level': 'error',
+                    'message': f'Crunchbase discovery error: {str(timeout_err)[:200]}'
+                }
+                yield {
+                    'type': 'stats',
+                    'stats': {
+                        'discovered': stats['discovered'],
+                        'errors': stats['errors']
+                    }
+                }
         except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"[ERROR] Outer exception in Crunchbase discovery: {error_details}")
+            stats['errors'] += 1
+            error_msg = str(e)[:200]
             yield {
                 'type': 'log',
                 'level': 'error',
-                'message': f'Crunchbase discovery failed: {str(e)[:100]}'
+                'message': f'Crunchbase discovery failed: {error_msg}'
+            }
+            yield {
+                'type': 'stats',
+                'stats': {
+                    'discovered': stats['discovered'],
+                    'errors': stats['errors']
+                }
             }
         
-        # Layer 2: F6S
+        # Layer 2: F6S - RE-ENABLED with improved timeout handling
         current_layer += 1
         yield {
             'type': 'status',
@@ -2422,7 +2508,10 @@ async def _discover_vcs_with_progress():
         }
         
         try:
-            f6s_accelerators = await discovery.discover_from_f6s_accelerators()
+            f6s_accelerators = await asyncio.wait_for(
+                discovery.discover_from_f6s_accelerators(),
+                timeout=120.0  # 2 minute timeout
+            )
             discovered_vcs.extend(f6s_accelerators)
             stats['discovered'] += len(f6s_accelerators)
             stats['accelerators'] += len(f6s_accelerators)
@@ -2431,14 +2520,45 @@ async def _discover_vcs_with_progress():
                 'level': 'success',
                 'message': f'F6S: Found {len(f6s_accelerators)} accelerators'
             }
+            yield {
+                'type': 'stats',
+                'stats': {
+                    'discovered': stats['discovered'],
+                    'vcs': stats['vcs'],
+                    'accelerators': stats['accelerators'],
+                    'studios': stats['studios']
+                }
+            }
+        except asyncio.TimeoutError:
+            stats['errors'] += 1
+            yield {
+                'type': 'log',
+                'level': 'warn',
+                'message': 'F6S discovery timed out. Skipping to next layer...'
+            }
+            yield {
+                'type': 'stats',
+                'stats': {
+                    'discovered': stats['discovered'],
+                    'errors': stats['errors']
+                }
+            }
         except Exception as e:
+            stats['errors'] += 1
             yield {
                 'type': 'log',
                 'level': 'error',
                 'message': f'F6S discovery failed: {str(e)[:100]}'
             }
+            yield {
+                'type': 'stats',
+                'stats': {
+                    'discovered': stats['discovered'],
+                    'errors': stats['errors']
+                }
+            }
         
-        # Layer 2.5: StudioHub
+        # Layer 2.5: StudioHub - RE-ENABLED with improved timeout handling
         current_layer += 1
         yield {
             'type': 'status',
@@ -2448,7 +2568,10 @@ async def _discover_vcs_with_progress():
         }
         
         try:
-            studiohub_studios = await discovery.discover_from_studiohub()
+            studiohub_studios = await asyncio.wait_for(
+                discovery.discover_from_studiohub(),
+                timeout=120.0  # 2 minute timeout
+            )
             discovered_vcs.extend(studiohub_studios)
             stats['discovered'] += len(studiohub_studios)
             stats['studios'] += len(studiohub_studios)
@@ -2457,14 +2580,45 @@ async def _discover_vcs_with_progress():
                 'level': 'success',
                 'message': f'StudioHub: Found {len(studiohub_studios)} studios'
             }
+            yield {
+                'type': 'stats',
+                'stats': {
+                    'discovered': stats['discovered'],
+                    'vcs': stats['vcs'],
+                    'accelerators': stats['accelerators'],
+                    'studios': stats['studios']
+                }
+            }
+        except asyncio.TimeoutError:
+            stats['errors'] += 1
+            yield {
+                'type': 'log',
+                'level': 'warn',
+                'message': 'StudioHub discovery timed out. Skipping to next layer...'
+            }
+            yield {
+                'type': 'stats',
+                'stats': {
+                    'discovered': stats['discovered'],
+                    'errors': stats['errors']
+                }
+            }
         except Exception as e:
+            stats['errors'] += 1
             yield {
                 'type': 'log',
                 'level': 'error',
                 'message': f'StudioHub discovery failed: {str(e)[:100]}'
             }
+            yield {
+                'type': 'stats',
+                'stats': {
+                    'discovered': stats['discovered'],
+                    'errors': stats['errors']
+                }
+            }
         
-        # Layer 3: VC Lists
+        # Layer 3: VC Lists - RE-ENABLED with improved timeout handling
         current_layer += 1
         yield {
             'type': 'status',
@@ -2474,50 +2628,133 @@ async def _discover_vcs_with_progress():
         }
         
         try:
-            vc_lists = await discovery.discover_from_vc_lists()
+            vc_lists = await asyncio.wait_for(
+                discovery.discover_from_vc_lists(),
+                timeout=180.0  # 3 minute timeout (more sources)
+            )
             discovered_vcs.extend(vc_lists)
             stats['discovered'] += len(vc_lists)
+            # Categorize by type
+            for vc in vc_lists:
+                vc_type = vc.get('type', 'VC')
+                if vc_type == 'VC':
+                    stats['vcs'] += 1
+                elif vc_type == 'Accelerator':
+                    stats['accelerators'] += 1
+                elif vc_type == 'Studio':
+                    stats['studios'] += 1
             yield {
                 'type': 'log',
                 'level': 'success',
                 'message': f'Directories: Found {len(vc_lists)} investment vehicles'
             }
+            yield {
+                'type': 'stats',
+                'stats': {
+                    'discovered': stats['discovered'],
+                    'vcs': stats['vcs'],
+                    'accelerators': stats['accelerators'],
+                    'studios': stats['studios']
+                }
+            }
+        except asyncio.TimeoutError:
+            stats['errors'] += 1
+            yield {
+                'type': 'log',
+                'level': 'warn',
+                'message': 'VC directory discovery timed out. Skipping to next layer...'
+            }
+            yield {
+                'type': 'stats',
+                'stats': {
+                    'discovered': stats['discovered'],
+                    'errors': stats['errors']
+                }
+            }
         except Exception as e:
+            stats['errors'] += 1
             yield {
                 'type': 'log',
                 'level': 'error',
                 'message': f'Directory discovery failed: {str(e)[:100]}'
             }
+            yield {
+                'type': 'stats',
+                'stats': {
+                    'discovered': stats['discovered'],
+                    'errors': stats['errors']
+                }
+            }
         
-        # Layer 4: Google Search
+        # Layer 4: Google Search - EXPANDED to find more companies
         current_layer += 1
         yield {
             'type': 'status',
-            'message': f'Searching Google for investment vehicles...',
+            'message': f'Searching Google for investment vehicles (expanded search)...',
             'layer': f'Layer {current_layer}/7: Google Search',
             'progress': int((current_layer / total_layers) * 50)
         }
         
         try:
+            # Expanded search queries to find more companies
             search_queries = [
                 "venture capital firms directory",
                 "top VC firms",
                 "venture studios list",
                 "startup accelerators directory",
+                "best venture capital firms",
+                "VC firms list",
+                "venture capital investors",
+                "top accelerators",
+                "venture studios directory",
+                "seed stage VCs",
+                "series A VCs",
+                "growth stage VCs",
+                "B2B SaaS VCs",
+                "AI ML venture capital",
+                "fintech VCs",
+                "healthcare VCs",
+                "enterprise software VCs",
             ]
-            google_results = await discovery.discover_from_google_search(search_queries, max_results_per_query=30)
+            google_results = await discovery.discover_from_google_search(search_queries, max_results_per_query=50)
             discovered_vcs.extend(google_results)
             stats['discovered'] += len(google_results)
+            # Categorize by type
+            for vc in google_results:
+                vc_type = vc.get('type', 'VC')
+                if vc_type == 'VC':
+                    stats['vcs'] += 1
+                elif vc_type == 'Accelerator':
+                    stats['accelerators'] += 1
+                elif vc_type == 'Studio':
+                    stats['studios'] += 1
             yield {
                 'type': 'log',
                 'level': 'success',
                 'message': f'Google Search: Found {len(google_results)} investment vehicles'
             }
+            yield {
+                'type': 'stats',
+                'stats': {
+                    'discovered': stats['discovered'],
+                    'vcs': stats['vcs'],
+                    'accelerators': stats['accelerators'],
+                    'studios': stats['studios']
+                }
+            }
         except Exception as e:
+            stats['errors'] += 1
             yield {
                 'type': 'log',
                 'level': 'warn',
                 'message': f'Google Search discovery failed: {str(e)[:100]}'
+            }
+            yield {
+                'type': 'stats',
+                'stats': {
+                    'discovered': stats['discovered'],
+                    'errors': stats['errors']
+                }
             }
         
         # Layer 5: Vertical-Specific
@@ -2530,45 +2767,104 @@ async def _discover_vcs_with_progress():
         }
         
         try:
-            verticals = ['FinTech', 'BioTech', 'AI', 'ClimateTech', 'Enterprise SaaS']
+            # Expanded list of verticals to find more companies
+            verticals = [
+                'FinTech', 'BioTech', 'AI', 'ClimateTech', 'Enterprise SaaS',
+                'B2B SaaS', 'DevTools', 'Security', 'EdTech', 'PropTech', 'InsurTech',
+                'Robotics', 'Blockchain', 'Web3', 'Gaming', 'E-commerce',
+                'Marketplace', 'Logistics', 'Supply Chain', 'HR Tech', 'Sales Tech'
+            ]
             vertical_results = await discovery.discover_from_vertical_specific(verticals)
             discovered_vcs.extend(vertical_results)
             stats['discovered'] += len(vertical_results)
+            # Categorize by type
+            for vc in vertical_results:
+                vc_type = vc.get('type', 'VC')
+                if vc_type == 'VC':
+                    stats['vcs'] += 1
+                elif vc_type == 'Accelerator':
+                    stats['accelerators'] += 1
+                elif vc_type == 'Studio':
+                    stats['studios'] += 1
             yield {
                 'type': 'log',
                 'level': 'success',
                 'message': f'Vertical-Specific: Found {len(vertical_results)} investment vehicles'
             }
+            yield {
+                'type': 'stats',
+                'stats': {
+                    'discovered': stats['discovered'],
+                    'vcs': stats['vcs'],
+                    'accelerators': stats['accelerators'],
+                    'studios': stats['studios']
+                }
+            }
         except Exception as e:
+            stats['errors'] += 1
             yield {
                 'type': 'log',
                 'level': 'warn',
                 'message': f'Vertical-specific discovery failed: {str(e)[:100]}'
             }
+            yield {
+                'type': 'stats',
+                'stats': {
+                    'discovered': stats['discovered'],
+                    'errors': stats['errors']
+                }
+            }
         
-        # Layer 6: Regional
+        # Layer 6: Regional - EXPANDED to find more companies
         current_layer += 1
         yield {
             'type': 'status',
-            'message': f'Discovering from regional directories...',
+            'message': f'Discovering from regional directories (expanded regions)...',
             'layer': f'Layer {current_layer}/7: Regional Discovery',
             'progress': int((current_layer / total_layers) * 50)
         }
         
         try:
+            # Regional discovery should already be comprehensive
             regional_results = await discovery.discover_from_regional_directories()
             discovered_vcs.extend(regional_results)
             stats['discovered'] += len(regional_results)
+            # Categorize by type
+            for vc in regional_results:
+                vc_type = vc.get('type', 'VC')
+                if vc_type == 'VC':
+                    stats['vcs'] += 1
+                elif vc_type == 'Accelerator':
+                    stats['accelerators'] += 1
+                elif vc_type == 'Studio':
+                    stats['studios'] += 1
             yield {
                 'type': 'log',
                 'level': 'success',
                 'message': f'Regional: Found {len(regional_results)} investment vehicles'
             }
+            yield {
+                'type': 'stats',
+                'stats': {
+                    'discovered': stats['discovered'],
+                    'vcs': stats['vcs'],
+                    'accelerators': stats['accelerators'],
+                    'studios': stats['studios']
+                }
+            }
         except Exception as e:
+            stats['errors'] += 1
             yield {
                 'type': 'log',
                 'level': 'warn',
                 'message': f'Regional discovery failed: {str(e)[:100]}'
+            }
+            yield {
+                'type': 'stats',
+                'stats': {
+                    'discovered': stats['discovered'],
+                    'errors': stats['errors']
+                }
             }
         
         # Processing: Adding to database
@@ -2771,9 +3067,68 @@ async def discover_vcs():
             detail=f"VC discovery failed: {str(e)}. This operation can take several minutes and may timeout. Please try again or check backend logs."
         )
 
+@app.post("/portfolios/discover/reset")
+async def reset_discovery_lock():
+    """Reset the VC discovery lock (for emergencies when discovery is stuck)"""
+    global _vc_discovery_in_progress, _vc_discovery_start_time
+    with _vc_discovery_lock:
+        was_running = _vc_discovery_in_progress
+        _vc_discovery_in_progress = False
+        _vc_discovery_start_time = None
+        print("[INFO] VC discovery lock manually reset")
+    return {
+        "message": "Discovery lock reset successfully",
+        "was_running": was_running
+    }
+
 @app.get("/portfolios/discover/stream")
 async def discover_vcs_stream():
     """Discover new VCs with real-time progress updates via Server-Sent Events"""
+    global _vc_discovery_in_progress, _vc_discovery_start_time
+    
+    import time
+    
+    # Check if discovery is already running (atomic check-and-set)
+    with _vc_discovery_lock:
+        if _vc_discovery_in_progress:
+            # Check if previous discovery has timed out
+            if _vc_discovery_start_time:
+                elapsed = time.time() - _vc_discovery_start_time
+                if elapsed > _vc_discovery_timeout:
+                    # Previous discovery timed out, reset it
+                    print(f"[WARN] Previous discovery timed out after {elapsed:.0f} seconds, resetting lock")
+                    _vc_discovery_in_progress = False
+                    _vc_discovery_start_time = None
+                else:
+                    # Still running, return error
+                    async def error_generator():
+                        yield {
+                            "event": "message",
+                            "data": json_module.dumps({
+                                "type": "error",
+                                "message": f"VC discovery is already running (started {elapsed:.0f}s ago). Please wait for it to complete or call POST /portfolios/discover/reset to reset."
+                            })
+                        }
+                    return EventSourceResponse(error_generator())
+        
+        # Atomically set the lock
+        if _vc_discovery_in_progress:
+            # Double-check after timeout check
+            async def error_generator():
+                yield {
+                    "event": "message",
+                    "data": json_module.dumps({
+                        "type": "error",
+                        "message": "VC discovery is already running. Please wait or call POST /portfolios/discover/reset to reset."
+                    })
+                }
+            return EventSourceResponse(error_generator())
+        
+        # Start new discovery
+        _vc_discovery_in_progress = True
+        _vc_discovery_start_time = time.time()
+        print(f"[INFO] Starting new VC discovery (lock acquired at {_vc_discovery_start_time})")
+    
     async def event_generator():
         try:
             # Send initial connection message
@@ -2788,12 +3143,15 @@ async def discover_vcs_stream():
             
             # Start discovery and stream updates
             # Note: _discover_vcs_with_progress() is an async generator
+            print("[DEBUG] Creating discovery generator...")
             discovery_gen = _discover_vcs_with_progress()
+            print("[DEBUG] Discovery generator created, starting iteration...")
             update_count = 0
             
             try:
                 async for update in discovery_gen:
                     update_count += 1
+                    print(f"[DEBUG] Received update #{update_count}: {update.get('type', 'unknown')} - {update.get('message', 'no message')[:100]}")
                     yield {
                         "event": "message",
                         "data": json_module.dumps(update)
@@ -2806,7 +3164,16 @@ async def discover_vcs_stream():
                         
             except StopAsyncIteration:
                 # Generator completed normally (shouldn't happen if we break on complete)
-                print(f"Discovery generator completed normally after {update_count} updates")
+                print(f"[WARN] Discovery generator completed with StopAsyncIteration after {update_count} updates (no complete message)")
+                # Send completion message if generator ended without one
+                if update_count == 0:
+                    yield {
+                        "event": "message",
+                        "data": json_module.dumps({
+                            "type": "error",
+                            "message": "Discovery generator completed without any updates. This may indicate an error."
+                        })
+                    }
             except GeneratorExit:
                 # Client disconnected, cleanup
                 print("Client disconnected from discovery stream")
@@ -2842,6 +3209,13 @@ async def discover_vcs_stream():
             except:
                 # If we can't send error, just log it
                 pass
+        finally:
+            # Always reset the flag when done
+            global _vc_discovery_in_progress, _vc_discovery_start_time
+            with _vc_discovery_lock:
+                _vc_discovery_in_progress = False
+                _vc_discovery_start_time = None
+                print("[INFO] VC discovery lock released")
     
     return EventSourceResponse(event_generator())
 

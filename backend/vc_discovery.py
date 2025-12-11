@@ -19,10 +19,28 @@ except ImportError:
 
 # Try to import Google Search API
 try:
-    from googlesearch import search as google_search
+    from googlesearch_python import GoogleSearch
     GOOGLE_SEARCH_AVAILABLE = True
+    # Create a wrapper function to match the old API
+    def google_search(query, num_results=10):
+        """Wrapper for googlesearch-python library"""
+        results = []
+        try:
+            search = GoogleSearch({"q": query, "num": num_results})
+            for result in search.results():
+                results.append(result.get('link', ''))
+        except Exception as e:
+            print(f"[WARN] Google search error for '{query}': {e}")
+        return results[:num_results]
 except ImportError:
-    GOOGLE_SEARCH_AVAILABLE = False
+    try:
+        # Fallback to old googlesearch library if available
+        from googlesearch import search as google_search
+        GOOGLE_SEARCH_AVAILABLE = True
+    except ImportError:
+        GOOGLE_SEARCH_AVAILABLE = False
+        def google_search(query, num_results=10):
+            return []
 
 
 class VCDiscovery:
@@ -320,20 +338,6 @@ class VCDiscovery:
         print(f"Discovered {len(discovered)} VCs total")
         return discovered
     
-    def _extract_domain(self, url: str) -> str:
-        """Extract domain from URL"""
-        if not url:
-            return ""
-        
-        # Remove protocol
-        url = url.replace('https://', '').replace('http://', '')
-        # Remove path
-        url = url.split('/')[0]
-        # Remove www
-        url = url.replace('www.', '')
-        
-        return url
-    
     async def categorize_vc(self, vc: Dict) -> Dict:
         """Categorize VC by stage and focus areas"""
         # Get VC website content
@@ -427,78 +431,109 @@ class VCDiscovery:
         pages_to_scrape = 10  # Start with 10 pages, can expand
         
         print(f"[CRUNCHBASE] Starting comprehensive discovery ({pages_to_scrape} pages)...")
+        print(f"[CRUNCHBASE] CRAWL4AI_AVAILABLE: {CRAWL4AI_AVAILABLE}")
         
         if CRAWL4AI_AVAILABLE:
             try:
                 browser_config = BrowserConfig(headless=True, verbose=False)
+                # Use more lenient wait strategy to avoid hanging
                 crawler_config = CrawlerRunConfig(
                     wait_for_images=False,
                     process_iframes=False,
-                    wait_for="networkidle",
-                    page_timeout=30000,
-                    wait_for_timeout=30000
+                    wait_for="load",  # Changed from "networkidle" to "load" - more reliable
+                    page_timeout=20000,  # 20 seconds max
+                    wait_for_timeout=15000  # 15 seconds for wait condition
                 )
                 
-                async with AsyncWebCrawler(config=browser_config) as crawler:
-                    for page in range(1, pages_to_scrape + 1):
-                        try:
-                            url = f"{base_url}?page={page}" if page > 1 else base_url
-                            print(f"  [Page {page}/{pages_to_scrape}] Crawling {url}...")
-                            
-                            result = await crawler.arun(url=url, config=crawler_config)
-                            
-                            if result.success and result.html:
-                                soup = BeautifulSoup(result.html, 'html.parser')
+                try:
+                    async with AsyncWebCrawler(config=browser_config) as crawler:
+                        print(f"  [DEBUG] Crawler initialized, starting pages...")
+                        for page in range(1, pages_to_scrape + 1):
+                            try:
+                                url = f"{base_url}?page={page}" if page > 1 else base_url
+                                print(f"  [Page {page}/{pages_to_scrape}] Crawling {url}...")
                                 
-                                # Crunchbase structure: Look for organization links
-                                org_links = soup.find_all('a', href=re.compile(r'/organization/'))
-                                
-                                page_count = 0
-                                for link in org_links[:200]:  # Limit per page
-                                    firm_name = link.get_text(strip=True)
-                                    href = link.get('href', '')
-                                    
-                                    if firm_name and len(firm_name) > 2 and len(firm_name) < 100:
-                                        name_key = firm_name.lower().strip()
-                                        if name_key in seen_firms:
-                                            continue
-                                        seen_firms.add(name_key)
-                                        
-                                        if href.startswith('/'):
-                                            href = f"https://www.crunchbase.com{href}"
-                                        
-                                        domain = self._extract_domain(href)
-                                        
-                                        discovered.append({
-                                            'firm_name': firm_name,
-                                            'url': href,
-                                            'domain': domain,
-                                            'discovered_from': 'crunchbase',
-                                            'type': 'VC'
-                                        })
-                                        page_count += 1
-                                
-                                print(f"    Found {page_count} VCs on page {page}")
-                                
-                                if page_count == 0:
-                                    print(f"    [INFO] No VCs found on page {page}, stopping pagination")
+                                # Add per-page timeout to prevent hanging
+                                try:
+                                    print(f"    [DEBUG] Starting crawl with 45s timeout...")
+                                    result = await asyncio.wait_for(
+                                        crawler.arun(url=url, config=crawler_config),
+                                        timeout=25.0  # 25 second timeout per page (reduced from 45s)
+                                    )
+                                    print(f"    [DEBUG] Crawl completed, success={result.success if result else False}")
+                                except asyncio.TimeoutError:
+                                    print(f"  [WARN] Page {page} timed out after 45 seconds, skipping...")
+                                    break  # Stop pagination if page times out
+                                except Exception as timeout_err:
+                                    print(f"  [ERROR] Exception during crawl timeout wrapper: {timeout_err}")
+                                    import traceback
+                                    print(traceback.format_exc())
                                     break
-                            
-                            await asyncio.sleep(3)  # Rate limiting
-                            
-                        except RuntimeError as e:
-                            error_msg = str(e)
-                            if "Timeout" in error_msg:
-                                print(f"  [WARN] Timeout on page {page}, continuing...")
-                            else:
-                                print(f"  [ERROR] Error on page {page}: {error_msg[:200]}")
-                            continue
-                        except Exception as e:
-                            print(f"  [ERROR] Error crawling page {page}: {e}")
-                            continue
-            
+                                
+                                if result and result.success and result.html:
+                                    soup = BeautifulSoup(result.html, 'html.parser')
+                                    
+                                    # Crunchbase structure: Look for organization links
+                                    org_links = soup.find_all('a', href=re.compile(r'/organization/'))
+                                    
+                                    page_count = 0
+                                    for link in org_links[:200]:  # Limit per page
+                                        firm_name = link.get_text(strip=True)
+                                        href = link.get('href', '')
+                                        
+                                        if firm_name and len(firm_name) > 2 and len(firm_name) < 100:
+                                            name_key = firm_name.lower().strip()
+                                            if name_key in seen_firms:
+                                                continue
+                                            seen_firms.add(name_key)
+                                            
+                                            if href.startswith('/'):
+                                                href = f"https://www.crunchbase.com{href}"
+                                            
+                                            domain = self._extract_domain(href)
+                                            
+                                            discovered.append({
+                                                'firm_name': firm_name,
+                                                'url': href,
+                                                'domain': domain,
+                                                'discovered_from': 'crunchbase',
+                                                'type': 'VC'
+                                            })
+                                            page_count += 1
+                                    
+                                    print(f"    Found {page_count} VCs on page {page}")
+                                    
+                                    if page_count == 0:
+                                        print(f"    [INFO] No VCs found on page {page}, stopping pagination")
+                                        break
+                                
+                                await asyncio.sleep(3)  # Rate limiting
+                                
+                            except RuntimeError as e:
+                                error_msg = str(e)
+                                if "Timeout" in error_msg:
+                                    print(f"  [WARN] Timeout on page {page}, continuing...")
+                                else:
+                                    print(f"  [ERROR] Error on page {page}: {error_msg[:200]}")
+                                continue
+                            except Exception as e:
+                                print(f"  [ERROR] Error crawling page {page}: {e}")
+                                import traceback
+                                print(traceback.format_exc())
+                                continue
+                
+                except Exception as crawler_init_err:
+                    import traceback
+                    error_details = traceback.format_exc()
+                    print(f"[ERROR] Crunchbase crawler initialization error: {error_details}")
+                    raise  # Re-raise to be caught by outer handler
             except Exception as e:
-                print(f"[ERROR] Crunchbase discovery error: {e}")
+                import traceback
+                error_details = traceback.format_exc()
+                print(f"[ERROR] Crunchbase discovery error: {error_details}")
+                raise  # Re-raise so it's caught by the timeout wrapper
+        else:
+            print(f"[WARN] CRAWL4AI not available, skipping Crunchbase discovery")
         
         print(f"[CRUNCHBASE] Discovered {len(discovered)} VCs total")
         return discovered
@@ -577,6 +612,384 @@ class VCDiscovery:
                 print(f"[ERROR] F6S discovery error: {e}")
         
         print(f"[F6S] Discovered {len(discovered)} accelerators total")
+        return discovered
+    
+    async def discover_from_studiohub(self) -> List[Dict]:
+        """Discover Venture Studios from StudioHub.io"""
+        discovered = []
+        seen_firms = set()
+        
+        base_url = "https://studiohub.io/studios"
+        pages_to_scrape = 10  # StudioHub has multiple pages
+        
+        print(f"[STUDIOHUB] Starting studio discovery ({pages_to_scrape} pages)...")
+        
+        if CRAWL4AI_AVAILABLE:
+            try:
+                browser_config = BrowserConfig(headless=True, verbose=False)
+                # Use more lenient wait strategy to avoid hanging
+                crawler_config = CrawlerRunConfig(
+                    wait_for_images=False,
+                    process_iframes=False,
+                    wait_for="load",  # Changed from "networkidle" to "load" - more reliable
+                    page_timeout=20000,  # 20 seconds max
+                    wait_for_timeout=15000  # 15 seconds for wait condition
+                )
+                
+                async with AsyncWebCrawler(config=browser_config) as crawler:
+                    for page in range(1, pages_to_scrape + 1):
+                        try:
+                            url = f"{base_url}?page={page}" if page > 1 else base_url
+                            print(f"  [Page {page}/{pages_to_scrape}] Crawling {url}...")
+                            
+                            result = await crawler.arun(url=url, config=crawler_config)
+                            
+                            if result.success and result.html:
+                                soup = BeautifulSoup(result.html, 'html.parser')
+                                
+                                # StudioHub structure: Look for studio links
+                                studio_links = soup.find_all('a', href=re.compile(r'/studio/|/studios/'))
+                                
+                                # Also look for studio names in headings and divs
+                                studio_elements = soup.find_all(['h1', 'h2', 'h3', 'div', 'span'],
+                                    class_=re.compile(r'studio|company|name', re.I))
+                                
+                                page_count = 0
+                                for link in studio_links[:100]:
+                                    firm_name = link.get_text(strip=True)
+                                    href = link.get('href', '')
+                                    
+                                    if firm_name and len(firm_name) > 2 and len(firm_name) < 100:
+                                        name_key = firm_name.lower().strip()
+                                        if name_key in seen_firms:
+                                            continue
+                                        seen_firms.add(name_key)
+                                        
+                                        if href.startswith('/'):
+                                            href = f"https://studiohub.io{href}"
+                                        elif not href.startswith('http'):
+                                            continue
+                                        
+                                        domain = self._extract_domain(href)
+                                        
+                                        discovered.append({
+                                            'firm_name': firm_name,
+                                            'url': href,
+                                            'domain': domain,
+                                            'discovered_from': 'studiohub',
+                                            'type': 'Studio'
+                                        })
+                                        page_count += 1
+                                
+                                # Process studio elements
+                                for elem in studio_elements[:50]:
+                                    firm_name = elem.get_text(strip=True)
+                                    if firm_name and 3 < len(firm_name) < 100:
+                                        name_key = firm_name.lower().strip()
+                                        if name_key not in seen_firms:
+                                            seen_firms.add(name_key)
+                                            link_elem = elem.find('a', href=re.compile(r'^https?://'))
+                                            if link_elem:
+                                                href = link_elem.get('href', '')
+                                                domain = self._extract_domain(href)
+                                                discovered.append({
+                                                    'firm_name': firm_name,
+                                                    'url': href,
+                                                    'domain': domain,
+                                                    'discovered_from': 'studiohub',
+                                                    'type': 'Studio'
+                                                })
+                                
+                                print(f"    Found {page_count} studios on page {page}")
+                                
+                                if page_count == 0:
+                                    break
+                            
+                            await asyncio.sleep(2)
+                            
+                        except Exception as e:
+                            print(f"  [ERROR] Error on page {page}: {e}")
+                            continue
+            
+            except Exception as e:
+                print(f"[ERROR] StudioHub discovery error: {e}")
+        
+        print(f"[STUDIOHUB] Discovered {len(discovered)} studios total")
+        return discovered
+    
+    async def discover_from_google_search(self, search_queries: List[str], max_results_per_query: int = 30) -> List[Dict]:
+        """Discover VCs using Google Search queries"""
+        discovered = []
+        seen_firms = set()
+        
+        print(f"[GOOGLE SEARCH] Starting discovery with {len(search_queries)} queries...")
+        
+        if GOOGLE_SEARCH_AVAILABLE:
+            try:
+                for query_idx, query in enumerate(search_queries):
+                    try:
+                        print(f"  [Query {query_idx + 1}/{len(search_queries)}] Searching: '{query}'...")
+                        
+                        # Use googlesearch library
+                        results = google_search(query, num_results=max_results_per_query)
+                        
+                        query_count = 0
+                        for url in results[:max_results_per_query]:
+                            try:
+                                # Extract domain and try to identify VC firms
+                                domain = self._extract_domain(url)
+                                
+                                if not domain or domain in seen_firms:
+                                    continue
+                                
+                                # Try to get page title/name
+                                async with aiohttp.ClientSession() as session:
+                                    try:
+                                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                                            if response.status == 200:
+                                                content = await response.text()
+                                                soup = BeautifulSoup(content, 'html.parser')
+                                                
+                                                # Extract firm name from title or h1
+                                                title = soup.find('title')
+                                                h1 = soup.find('h1')
+                                                
+                                                firm_name = ""
+                                                if title:
+                                                    firm_name = title.get_text(strip=True)
+                                                    # Clean up title (remove common suffixes)
+                                                    firm_name = re.sub(r'\s*[-|]\s*(Venture Capital|VC|Capital|Fund|Investments).*$', '', firm_name, flags=re.I)
+                                                elif h1:
+                                                    firm_name = h1.get_text(strip=True)
+                                                
+                                                # Check if page contains VC-related keywords
+                                                text_lower = soup.get_text().lower()
+                                                vc_keywords = ['venture capital', 'vc', 'investments', 'portfolio', 'fund', 'startup', 'accelerator', 'studio']
+                                                
+                                                if firm_name and any(keyword in text_lower for keyword in vc_keywords):
+                                                    name_key = firm_name.lower().strip()
+                                                    if name_key not in seen_firms and len(firm_name) > 2:
+                                                        seen_firms.add(name_key)
+                                                        seen_firms.add(domain)
+                                                        
+                                                        # Determine type
+                                                        vc_type = 'VC'
+                                                        if 'accelerator' in text_lower:
+                                                            vc_type = 'Accelerator'
+                                                        elif 'studio' in text_lower:
+                                                            vc_type = 'Studio'
+                                                        
+                                                        discovered.append({
+                                                            'firm_name': firm_name,
+                                                            'url': url,
+                                                            'domain': domain,
+                                                            'discovered_from': f'google_search:{query}',
+                                                            'type': vc_type
+                                                        })
+                                                        query_count += 1
+                                    except Exception:
+                                        continue  # Skip if can't fetch page
+                            except Exception as e:
+                                continue
+                        
+                        print(f"    Found {query_count} investment vehicles from query")
+                        await asyncio.sleep(2)  # Rate limiting
+                        
+                    except Exception as e:
+                        print(f"  [ERROR] Error with query '{query}': {e}")
+                        continue
+            except Exception as e:
+                print(f"[ERROR] Google search discovery error: {e}")
+        else:
+            print("[WARN] Google search library not available, skipping Google search discovery")
+        
+        print(f"[GOOGLE SEARCH] Discovered {len(discovered)} investment vehicles total")
+        return discovered
+    
+    async def discover_from_vertical_specific(self, verticals: List[str]) -> List[Dict]:
+        """Discover VCs focused on specific verticals"""
+        discovered = []
+        seen_firms = set()
+        
+        print(f"[VERTICAL] Starting vertical-specific discovery for {len(verticals)} verticals...")
+        
+        # Build search queries for each vertical
+        search_queries = []
+        for vertical in verticals:
+            search_queries.extend([
+                f"{vertical} venture capital firms",
+                f"{vertical} VC firms",
+                f"{vertical} investors",
+                f"top {vertical} VCs"
+            ])
+        
+        # Use Google search for vertical-specific discovery
+        if GOOGLE_SEARCH_AVAILABLE:
+            try:
+                for query in search_queries:
+                    try:
+                        print(f"  Searching: '{query}'...")
+                        results = google_search(query, num_results=20)
+                        
+                        query_count = 0
+                        for url in results[:20]:
+                            try:
+                                domain = self._extract_domain(url)
+                                
+                                if not domain or domain in seen_firms:
+                                    continue
+                                
+                                async with aiohttp.ClientSession() as session:
+                                    try:
+                                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                                            if response.status == 200:
+                                                content = await response.text()
+                                                soup = BeautifulSoup(content, 'html.parser')
+                                                
+                                                title = soup.find('title')
+                                                firm_name = title.get_text(strip=True) if title else ""
+                                                firm_name = re.sub(r'\s*[-|]\s*(Venture Capital|VC|Capital|Fund).*$', '', firm_name, flags=re.I)
+                                                
+                                                text_lower = soup.get_text().lower()
+                                                
+                                                if firm_name and ('venture' in text_lower or 'vc' in text_lower or 'capital' in text_lower):
+                                                    name_key = firm_name.lower().strip()
+                                                    if name_key not in seen_firms and len(firm_name) > 2:
+                                                        seen_firms.add(name_key)
+                                                        seen_firms.add(domain)
+                                                        
+                                                        # Extract focus areas from page content
+                                                        focus_areas = []
+                                                        vertical_lower = query.split()[0].lower()
+                                                        if vertical_lower in text_lower:
+                                                            focus_areas.append(vertical_lower.title())
+                                                        
+                                                        discovered.append({
+                                                            'firm_name': firm_name,
+                                                            'url': url,
+                                                            'domain': domain,
+                                                            'discovered_from': f'vertical:{query}',
+                                                            'type': 'VC',
+                                                            'focus_areas': focus_areas
+                                                        })
+                                                        query_count += 1
+                                    except Exception:
+                                        continue
+                            except Exception:
+                                continue
+                        
+                        await asyncio.sleep(2)
+                    except Exception as e:
+                        print(f"  [ERROR] Error with vertical query '{query}': {e}")
+                        continue
+            except Exception as e:
+                print(f"[ERROR] Vertical-specific discovery error: {e}")
+        else:
+            print("[WARN] Google search library not available, skipping vertical-specific discovery")
+        
+        print(f"[VERTICAL] Discovered {len(discovered)} vertical-specific investment vehicles total")
+        return discovered
+    
+    async def discover_from_regional_directories(self) -> List[Dict]:
+        """Discover VCs from regional directories"""
+        discovered = []
+        seen_firms = set()
+        
+        print(f"[REGIONAL] Starting regional directory discovery...")
+        
+        # Regional directories and search queries
+        regional_sources = [
+            {
+                "name": "US States",
+                "queries": [
+                    "venture capital firms California",
+                    "VC firms New York",
+                    "venture capital Texas",
+                    "VC firms Massachusetts",
+                    "venture capital Washington"
+                ]
+            },
+            {
+                "name": "Europe",
+                "queries": [
+                    "venture capital firms London",
+                    "VC firms Berlin",
+                    "venture capital Paris",
+                    "VC firms Amsterdam",
+                    "venture capital Stockholm"
+                ]
+            },
+            {
+                "name": "Asia",
+                "queries": [
+                    "venture capital firms Singapore",
+                    "VC firms Hong Kong",
+                    "venture capital India",
+                    "VC firms China",
+                    "venture capital Japan"
+                ]
+            }
+        ]
+        
+        if GOOGLE_SEARCH_AVAILABLE:
+            try:
+                for region in regional_sources:
+                    print(f"  Discovering {region['name']}...")
+                    
+                    for query in region['queries']:
+                        try:
+                            results = list(google_search(query, num_results=15))
+                            
+                            query_count = 0
+                            for url in results[:15]:
+                                try:
+                                    domain = self._extract_domain(url)
+                                    
+                                    if not domain or domain in seen_firms:
+                                        continue
+                                    
+                                    async with aiohttp.ClientSession() as session:
+                                        try:
+                                            async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                                                if response.status == 200:
+                                                    content = await response.text()
+                                                    soup = BeautifulSoup(content, 'html.parser')
+                                                    
+                                                    title = soup.find('title')
+                                                    firm_name = title.get_text(strip=True) if title else ""
+                                                    firm_name = re.sub(r'\s*[-|]\s*(Venture Capital|VC|Capital|Fund).*$', '', firm_name, flags=re.I)
+                                                    
+                                                    text_lower = soup.get_text().lower()
+                                                    
+                                                    if firm_name and ('venture' in text_lower or 'vc' in text_lower):
+                                                        name_key = firm_name.lower().strip()
+                                                        if name_key not in seen_firms and len(firm_name) > 2:
+                                                            seen_firms.add(name_key)
+                                                            seen_firms.add(domain)
+                                                            
+                                                            discovered.append({
+                                                                'firm_name': firm_name,
+                                                                'url': url,
+                                                                'domain': domain,
+                                                                'discovered_from': f'regional:{query}',
+                                                                'type': 'VC'
+                                                            })
+                                                            query_count += 1
+                                        except Exception:
+                                            continue
+                                except Exception:
+                                    continue
+                            
+                            await asyncio.sleep(2)
+                        except Exception as e:
+                            print(f"    [ERROR] Error with regional query '{query}': {e}")
+                            continue
+            except Exception as e:
+                print(f"[ERROR] Regional discovery error: {e}")
+        else:
+            print("[WARN] Google search library not available, skipping regional discovery")
+        
+        print(f"[REGIONAL] Discovered {len(discovered)} regional investment vehicles total")
         return discovered
     
     async def discover_all(self) -> List[Dict]:
