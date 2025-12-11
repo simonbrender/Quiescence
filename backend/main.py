@@ -2659,6 +2659,20 @@ async def _discover_vcs_with_progress():
         stats['skipped'] = skipped_duplicates
         stats['errors'] = errors
         
+        # Final stats update before completion
+        yield {
+            'type': 'stats',
+            'stats': {
+                'discovered': len(discovered_vcs),
+                'added': added_count,
+                'skipped': skipped_duplicates,
+                'errors': errors,
+                'vcs': stats['vcs'],
+                'accelerators': stats['accelerators'],
+                'studios': stats['studios']
+            }
+        }
+        
         yield {
             'type': 'complete',
             'progress': 100,
@@ -2674,10 +2688,12 @@ async def _discover_vcs_with_progress():
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
+        print(f"Discovery generator error: {error_details}")
         yield {
             'type': 'error',
             'message': f'Discovery failed: {str(e)}'
         }
+        raise  # Re-raise so SSE endpoint can handle it
 
 @app.post("/portfolios/discover")
 async def discover_vcs():
@@ -2772,22 +2788,39 @@ async def discover_vcs_stream():
             
             # Start discovery and stream updates
             # Note: _discover_vcs_with_progress() is an async generator
-            # We need to properly iterate over it
             discovery_gen = _discover_vcs_with_progress()
+            update_count = 0
+            
             try:
                 async for update in discovery_gen:
+                    update_count += 1
                     yield {
                         "event": "message",
                         "data": json_module.dumps(update)
                     }
+                    
+                    # If we got a complete or error message, generator should finish
+                    if update.get('type') in ('complete', 'error'):
+                        print(f"Discovery completed with {update_count} updates")
+                        break
+                        
             except StopAsyncIteration:
-                # Generator completed normally
+                # Generator completed normally (shouldn't happen if we break on complete)
+                print(f"Discovery generator completed normally after {update_count} updates")
+            except GeneratorExit:
+                # Client disconnected, cleanup
+                print("Client disconnected from discovery stream")
+                raise
+            except Exception as gen_err:
+                # Error in generator iteration
+                import traceback
+                error_details = traceback.format_exc()
+                print(f"Error iterating discovery generator: {error_details}")
                 yield {
                     "event": "message",
                     "data": json_module.dumps({
-                        "type": "status",
-                        "message": "Discovery completed",
-                        "progress": 100
+                        "type": "error",
+                        "message": f"Discovery error: {str(gen_err)}"
                     })
                 }
         except GeneratorExit:
