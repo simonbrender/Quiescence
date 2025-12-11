@@ -34,6 +34,74 @@ class FreeTextSearchTestSuite:
         self.api_base_url = api_base_url
         self.test_results = []
         self.failed_tests = []
+        self.csv_output_dir = Path(__file__).parent / "test_data_exports"
+        self.csv_output_dir.mkdir(exist_ok=True)
+    
+    def export_companies_to_csv(self, companies: List[Dict], filename: str, query: str = ""):
+        """Export companies to CSV for validation"""
+        if not companies:
+            return
+        
+        csv_path = self.csv_output_dir / filename
+        fieldnames = ['name', 'domain', 'source', 'last_raise_stage', 'funding_amount', 
+                     'employee_count', 'focus_areas', 'yc_batch', 'created_at', 'messaging_score',
+                     'motion_score', 'market_score']
+        
+        with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction='ignore')
+            writer.writeheader()
+            for company in companies:
+                row = {}
+                for field in fieldnames:
+                    value = company.get(field)
+                    if isinstance(value, (list, dict)):
+                        value = json.dumps(value)
+                    row[field] = value
+                writer.writerow(row)
+        
+        print(f"  [CSV] Exported {len(companies)} companies to {csv_path}")
+    
+    def validate_data_quality(self, companies: List[Dict], query: str):
+        """Validate enterprise-grade data quality"""
+        print(f"\n  [QUALITY] Data Quality Validation:")
+        
+        total = len(companies)
+        if total == 0:
+            print(f"    No companies to validate")
+            return
+        
+        # Check completeness
+        has_name = sum(1 for c in companies if c.get('name'))
+        has_domain = sum(1 for c in companies if c.get('domain'))
+        has_stage = sum(1 for c in companies if c.get('last_raise_stage'))
+        has_funding = sum(1 for c in companies if c.get('funding_amount'))
+        has_employees = sum(1 for c in companies if c.get('employee_count'))
+        has_scores = sum(1 for c in companies if c.get('messaging_score') is not None)
+        
+        print(f"    Completeness:")
+        print(f"      Name: {has_name}/{total} ({has_name/total*100:.1f}%)")
+        print(f"      Domain: {has_domain}/{total} ({has_domain/total*100:.1f}%)")
+        print(f"      Stage: {has_stage}/{total} ({has_stage/total*100:.1f}%)")
+        print(f"      Funding: {has_funding}/{total} ({has_funding/total*100:.1f}%)")
+        print(f"      Employees: {has_employees}/{total} ({has_employees/total*100:.1f}%)")
+        print(f"      Scores: {has_scores}/{total} ({has_scores/total*100:.1f}%)")
+        
+        # Check for duplicates
+        domains = [c.get('domain', '').lower().strip() for c in companies if c.get('domain')]
+        unique_domains = len(set(domains))
+        duplicates = len(domains) - unique_domains
+        print(f"    Uniqueness: {unique_domains} unique domains, {duplicates} duplicates")
+        
+        # Check data validity
+        valid_domains = sum(1 for d in domains if '.' in d and len(d) > 3)
+        print(f"    Validity: {valid_domains}/{len(domains)} valid domains")
+        
+        # Enterprise-grade threshold: >80% completeness
+        completeness_score = (has_name + has_domain + has_stage) / (total * 3) * 100
+        if completeness_score >= 80:
+            print(f"    [PASS] Data quality meets enterprise standards ({completeness_score:.1f}% completeness)")
+        else:
+            print(f"    [WARN] Data quality below enterprise standards ({completeness_score:.1f}% completeness)")
         
     def test_query_parsing(self, query: str, expected_params: Dict) -> bool:
         """Test that query parsing extracts correct parameters"""

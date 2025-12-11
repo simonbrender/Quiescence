@@ -1292,57 +1292,62 @@ async def free_text_search(request: FreeTextSearchRequest):
         raise HTTPException(status_code=500, detail=f"Error parsing query: {str(e)}")
 
 @app.post("/companies/enrich")
-async def enrich_companies_endpoint():
+async def enrich_companies_endpoint(batch_size: int = 100):
     """
-    Enrich all companies in the database with stage, focus areas, employees, and funding data.
-    This endpoint triggers batch enrichment of existing companies.
+    Enrich companies in the database with stage, focus areas, employees, and funding data.
+    Runs enrichment in background and returns immediately.
     """
     try:
         import asyncio
         from enrich_existing_companies import enrich_company_batch
         
-        print("[ENRICH-API] Starting batch enrichment...")
+        print("[ENRICH-API] Starting batch enrichment in background...")
         
-        # Get all companies
+        # Get companies that need enrichment
         companies = conn.execute("""
             SELECT id, name, domain, source, yc_batch, last_raise_stage, 
                    focus_areas, employee_count, funding_amount
             FROM companies
+            WHERE last_raise_stage IS NULL OR focus_areas IS NULL OR focus_areas = '' OR focus_areas = '[]'
             ORDER BY created_at DESC
-        """).fetchall()
+            LIMIT ?
+        """, (batch_size,)).fetchall()
         
         columns = ['id', 'name', 'domain', 'source', 'yc_batch', 'last_raise_stage',
                   'focus_areas', 'employee_count', 'funding_amount']
         company_dicts = [dict(zip(columns, row)) for row in companies]
         
         total = len(company_dicts)
-        print(f"[ENRICH-API] Found {total} companies to enrich")
+        print(f"[ENRICH-API] Found {total} companies to enrich (batch size: {batch_size})")
         
-        # Run enrichment
-        enriched, updated = await enrich_company_batch(conn, company_dicts)
-        
-        # Get stats after enrichment
-        stats = conn.execute("""
-            SELECT COUNT(*) as total,
-                   COUNT(last_raise_stage) as with_stage,
-                   COUNT(CASE WHEN focus_areas IS NOT NULL AND focus_areas != '' AND focus_areas != '[]' THEN 1 END) as with_focus,
-                   COUNT(employee_count) as with_employees,
-                   COUNT(funding_amount) as with_funding
-            FROM companies
-        """).fetchone()
-        
-        return {
-            "status": "success",
-            "total_companies": total,
-            "enriched": enriched,
-            "updated": updated,
-            "stats": {
-                "total": stats[0],
-                "with_stage": stats[1],
-                "with_focus_areas": stats[2],
-                "with_employees": stats[3],
-                "with_funding": stats[4]
+        if total == 0:
+            return {
+                "status": "success",
+                "message": "No companies need enrichment",
+                "total_companies": 0,
+                "enriched": 0,
+                "updated": 0
             }
+        
+        # Run enrichment in background task
+        async def enrich_background():
+            try:
+                enriched, updated = await enrich_company_batch(conn, company_dicts)
+                print(f"[ENRICH-API] Background enrichment completed: {enriched} processed, {updated} updated")
+            except Exception as e:
+                print(f"[ENRICH-API] Background enrichment error: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # Start background task
+        asyncio.create_task(enrich_background())
+        
+        # Return immediately
+        return {
+            "status": "started",
+            "message": f"Enrichment started in background for {total} companies",
+            "total_companies": total,
+            "batch_size": batch_size
         }
     except Exception as e:
         print(f"[ENRICH-API] Error: {e}")

@@ -34,20 +34,23 @@ async def infer_focus_area_from_domain(domain: str, name: str) -> List[str]:
     focus_areas = []
     text = (domain + " " + name).lower()
     
-    # AI/ML indicators
-    if any(keyword in text for keyword in ['ai', 'ml', 'machine learning', 'artificial intelligence', 'deep learning', 'llm', 'gpt', 'neural']):
-        focus_areas.append('AI/ML')
+    # AI/ML indicators (check first to avoid false positives)
+    ai_keywords = ['ai', 'ml', 'machine learning', 'artificial intelligence', 'deep learning', 'llm', 'gpt', 'neural', 'openai', 'anthropic']
+    if any(keyword in text for keyword in ai_keywords):
+        # Make sure it's not matching "raise" or "paid" etc
+        if any(kw in text for kw in ['ai', 'ml', 'machine', 'llm', 'gpt']) and not any(avoid in text for avoid in ['raise', 'paid', 'fair']):
+            focus_areas.append('AI/ML')
     
     # B2B SaaS indicators
-    if any(keyword in text for keyword in ['saas', 'b2b', 'enterprise', 'platform', 'api', 'software']):
+    if any(keyword in text for keyword in ['saas', 'b2b', 'enterprise', 'platform', 'api', 'software', 'cloud']):
         focus_areas.append('B2B SaaS')
     
     # Fintech indicators
-    if any(keyword in text for keyword in ['fintech', 'finance', 'payment', 'banking', 'crypto', 'blockchain']):
+    if any(keyword in text for keyword in ['fintech', 'finance', 'payment', 'banking', 'crypto', 'blockchain', 'stripe', 'plaid']):
         focus_areas.append('Fintech')
     
     # DevTools indicators
-    if any(keyword in text for keyword in ['dev', 'developer', 'tools', 'infrastructure', 'ci/cd', 'deployment']):
+    if any(keyword in text for keyword in ['dev', 'developer', 'tools', 'infrastructure', 'ci/cd', 'deployment', 'github', 'gitlab']):
         focus_areas.append('DevTools')
     
     return focus_areas if focus_areas else ['B2B SaaS']  # Default to B2B SaaS
