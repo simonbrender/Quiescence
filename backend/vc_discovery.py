@@ -104,20 +104,50 @@ class VCDiscovery:
         if CRAWL4AI_AVAILABLE:
             try:
                 browser_config = BrowserConfig(headless=True, verbose=False)
+                # Use more lenient timeout and wait conditions
                 crawler_config = CrawlerRunConfig(
                     wait_for_images=False, 
                     process_iframes=False,
-                    wait_for="domcontentloaded",
-                    page_timeout=20000
+                    wait_for="networkidle",  # Changed from domcontentloaded to networkidle for better reliability
+                    page_timeout=30000,  # Increased from 20000 to 30000ms (30 seconds)
+                    wait_for_timeout=30000  # Explicit timeout for wait condition
                 )
                 
                 async with AsyncWebCrawler(config=browser_config) as crawler:
                     for idx, source in enumerate(sources):
                         try:
                             print(f"[{idx+1}/{len(sources)}] Crawling {source['url']}...")
-                            result = await crawler.arun(url=source["url"], config=crawler_config)
                             
-                            if result.success and result.html:
+                            # Try crawling with retry logic
+                            result = None
+                            max_retries = 2
+                            for retry in range(max_retries):
+                                try:
+                                    result = await crawler.arun(url=source["url"], config=crawler_config)
+                                    if result.success:
+                                        break
+                                except RuntimeError as e:
+                                    if "Timeout" in str(e) or "Wait condition failed" in str(e):
+                                        if retry < max_retries - 1:
+                                            print(f"  [WARN] Timeout on attempt {retry + 1}, retrying with shorter timeout...")
+                                            # Use shorter timeout on retry
+                                            retry_config = CrawlerRunConfig(
+                                                wait_for_images=False,
+                                                process_iframes=False,
+                                                wait_for="load",  # More lenient wait condition
+                                                page_timeout=15000,
+                                                wait_for_timeout=15000
+                                            )
+                                            result = await crawler.arun(url=source["url"], config=retry_config)
+                                            if result.success:
+                                                break
+                                        else:
+                                            print(f"  [ERROR] Failed after {max_retries} attempts: {e}")
+                                            result = None
+                                    else:
+                                        raise  # Re-raise if it's not a timeout error
+                            
+                            if result and result.success and result.html:
                                 soup = BeautifulSoup(result.html, 'html.parser')
                                 
                                 # Look for VC firm links with various patterns
@@ -182,11 +212,21 @@ class VCDiscovery:
                                                     'discovered_from': source["url"],
                                                     'type': 'VC'
                                                 })
+                        except RuntimeError as e:
+                            error_msg = str(e)
+                            if "Timeout" in error_msg or "Wait condition failed" in error_msg:
+                                print(f"  [WARN] Timeout crawling {source['url']} - skipping (this is normal for some sites)")
+                            else:
+                                print(f"  [ERROR] Runtime error crawling {source['url']}: {error_msg[:200]}")
+                            continue
                         except Exception as e:
-                            print(f"Error discovering from {source['url']}: {e}")
+                            error_msg = str(e)
+                            print(f"  [ERROR] Error discovering from {source['url']}: {error_msg[:200]}")
                             continue
             except Exception as e:
-                print(f"VC discovery error: {e}")
+                error_msg = str(e)
+                print(f"[ERROR] VC discovery crawler error: {error_msg[:200]}")
+                print("[INFO] Continuing with fallback discovery methods...")
         
         # Also try web search approach using common VC firm patterns
         # This is a fallback if direct crawling doesn't work
