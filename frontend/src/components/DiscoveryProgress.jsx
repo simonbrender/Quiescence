@@ -24,14 +24,23 @@ export default function DiscoveryProgress({ onComplete, onClose }) {
     const eventSource = new EventSource('http://localhost:8000/portfolios/discover/stream')
     eventSourceRef.current = eventSource
 
+    eventSource.onopen = () => {
+      console.log('SSE connection opened')
+      setStatus('Connected, starting discovery...')
+    }
+
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
+        console.log('SSE update:', data)
         
         if (data.type === 'status') {
           setStatus(data.message)
           if (data.layer) {
             setCurrentLayer(data.layer)
+          }
+          if (data.progress !== undefined) {
+            setProgress(data.progress)
           }
         } else if (data.type === 'progress') {
           setProgress(data.progress || 0)
@@ -41,7 +50,7 @@ export default function DiscoveryProgress({ onComplete, onClose }) {
             ...data.stats
           }))
         } else if (data.type === 'log') {
-          setLogs(prev => [...prev, {
+          setLogs(prev => [...prev.slice(-49), {
             level: data.level || 'info',
             message: data.message,
             timestamp: new Date().toLocaleTimeString()
@@ -50,6 +59,10 @@ export default function DiscoveryProgress({ onComplete, onClose }) {
           setIsComplete(true)
           setProgress(100)
           setStatus('Discovery complete!')
+          setStats(prev => ({
+            ...prev,
+            ...data.result?.stats
+          }))
           eventSource.close()
           if (onComplete) {
             setTimeout(() => {
@@ -58,22 +71,28 @@ export default function DiscoveryProgress({ onComplete, onClose }) {
           }
         } else if (data.type === 'error') {
           setError(data.message)
+          setIsComplete(true)
           eventSource.close()
         }
       } catch (err) {
-        console.error('Error parsing SSE data:', err)
+        console.error('Error parsing SSE data:', err, event.data)
       }
     }
 
     eventSource.onerror = (err) => {
       console.error('SSE error:', err)
-      setError('Connection error. Discovery may still be running.')
-      // Don't close on error - might be temporary
+      if (eventSource.readyState === EventSource.CLOSED) {
+        setError('Connection closed. Discovery may have completed or failed.')
+        setIsComplete(true)
+      } else {
+        setError('Connection error. Discovery may still be running.')
+      }
     }
 
     return () => {
       if (eventSourceRef.current) {
         eventSourceRef.current.close()
+        eventSourceRef.current = null
       }
     }
   }, [onComplete])

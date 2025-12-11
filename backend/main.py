@@ -2760,17 +2760,31 @@ async def discover_vcs_stream():
     """Discover new VCs with real-time progress updates via Server-Sent Events"""
     async def event_generator():
         try:
+            # Send initial connection message
+            yield {
+                "event": "message",
+                "data": json_module.dumps({
+                    "type": "status",
+                    "message": "Starting discovery process...",
+                    "progress": 0
+                })
+            }
+            
+            # Start discovery and stream updates
             async for update in _discover_vcs_with_progress():
                 yield {
                     "event": "message",
                     "data": json_module.dumps(update)
                 }
         except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"Discovery stream error: {error_details}")
             yield {
                 "event": "error",
                 "data": json_module.dumps({
                     "type": "error",
-                    "message": str(e)
+                    "message": f"Discovery failed: {str(e)}"
                 })
             }
     
