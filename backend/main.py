@@ -999,7 +999,10 @@ async def free_text_search(request: FreeTextSearchRequest):
                                 'timestamp': datetime.now().isoformat()
                             })
                     finally:
-                        await discovery.close()
+                        try:
+                            await discovery.close()
+                        except:
+                            pass
                 
                 # Start background task (don't await - let it run in background)
                 asyncio.create_task(background_scrape())
