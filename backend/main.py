@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from sse_starlette.sse import EventSourceResponse
+import json as json_module
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import duckdb
@@ -2365,9 +2366,322 @@ async def delete_discovery_source(source_id: int):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+async def _discover_vcs_with_progress():
+    """Internal discovery function that yields progress updates"""
+    discovery = VCDiscovery()
+    total_layers = 7
+    current_layer = 0
+    
+    # Track stats
+    stats = {
+        'discovered': 0,
+        'added': 0,
+        'skipped': 0,
+        'errors': 0,
+        'vcs': 0,
+        'accelerators': 0,
+        'studios': 0
+    }
+    
+    discovered_vcs = []
+    
+    try:
+        # Layer 1: Crunchbase
+        current_layer += 1
+        yield {
+            'type': 'status',
+            'message': f'Discovering from Crunchbase...',
+            'layer': f'Layer {current_layer}/7: Crunchbase VC Discovery',
+            'progress': int((current_layer / total_layers) * 50)
+        }
+        
+        try:
+            crunchbase_vcs = await discovery.discover_from_crunchbase_comprehensive()
+            discovered_vcs.extend(crunchbase_vcs)
+            stats['discovered'] += len(crunchbase_vcs)
+            stats['vcs'] += len(crunchbase_vcs)
+            yield {
+                'type': 'log',
+                'level': 'success',
+                'message': f'Crunchbase: Found {len(crunchbase_vcs)} VCs'
+            }
+        except Exception as e:
+            yield {
+                'type': 'log',
+                'level': 'error',
+                'message': f'Crunchbase discovery failed: {str(e)[:100]}'
+            }
+        
+        # Layer 2: F6S
+        current_layer += 1
+        yield {
+            'type': 'status',
+            'message': f'Discovering accelerators from F6S...',
+            'layer': f'Layer {current_layer}/7: F6S Accelerator Discovery',
+            'progress': int((current_layer / total_layers) * 50)
+        }
+        
+        try:
+            f6s_accelerators = await discovery.discover_from_f6s_accelerators()
+            discovered_vcs.extend(f6s_accelerators)
+            stats['discovered'] += len(f6s_accelerators)
+            stats['accelerators'] += len(f6s_accelerators)
+            yield {
+                'type': 'log',
+                'level': 'success',
+                'message': f'F6S: Found {len(f6s_accelerators)} accelerators'
+            }
+        except Exception as e:
+            yield {
+                'type': 'log',
+                'level': 'error',
+                'message': f'F6S discovery failed: {str(e)[:100]}'
+            }
+        
+        # Layer 2.5: StudioHub
+        current_layer += 1
+        yield {
+            'type': 'status',
+            'message': f'Discovering studios from StudioHub...',
+            'layer': f'Layer {current_layer}/7: StudioHub Studio Discovery',
+            'progress': int((current_layer / total_layers) * 50)
+        }
+        
+        try:
+            studiohub_studios = await discovery.discover_from_studiohub()
+            discovered_vcs.extend(studiohub_studios)
+            stats['discovered'] += len(studiohub_studios)
+            stats['studios'] += len(studiohub_studios)
+            yield {
+                'type': 'log',
+                'level': 'success',
+                'message': f'StudioHub: Found {len(studiohub_studios)} studios'
+            }
+        except Exception as e:
+            yield {
+                'type': 'log',
+                'level': 'error',
+                'message': f'StudioHub discovery failed: {str(e)[:100]}'
+            }
+        
+        # Layer 3: VC Lists
+        current_layer += 1
+        yield {
+            'type': 'status',
+            'message': f'Discovering from VC directories...',
+            'layer': f'Layer {current_layer}/7: VC Directory Lists',
+            'progress': int((current_layer / total_layers) * 50)
+        }
+        
+        try:
+            vc_lists = await discovery.discover_from_vc_lists()
+            discovered_vcs.extend(vc_lists)
+            stats['discovered'] += len(vc_lists)
+            yield {
+                'type': 'log',
+                'level': 'success',
+                'message': f'Directories: Found {len(vc_lists)} investment vehicles'
+            }
+        except Exception as e:
+            yield {
+                'type': 'log',
+                'level': 'error',
+                'message': f'Directory discovery failed: {str(e)[:100]}'
+            }
+        
+        # Layer 4: Google Search
+        current_layer += 1
+        yield {
+            'type': 'status',
+            'message': f'Searching Google for investment vehicles...',
+            'layer': f'Layer {current_layer}/7: Google Search',
+            'progress': int((current_layer / total_layers) * 50)
+        }
+        
+        try:
+            search_queries = [
+                "venture capital firms directory",
+                "top VC firms",
+                "venture studios list",
+                "startup accelerators directory",
+            ]
+            google_results = await discovery.discover_from_google_search(search_queries, max_results_per_query=30)
+            discovered_vcs.extend(google_results)
+            stats['discovered'] += len(google_results)
+            yield {
+                'type': 'log',
+                'level': 'success',
+                'message': f'Google Search: Found {len(google_results)} investment vehicles'
+            }
+        except Exception as e:
+            yield {
+                'type': 'log',
+                'level': 'warn',
+                'message': f'Google Search discovery failed: {str(e)[:100]}'
+            }
+        
+        # Layer 5: Vertical-Specific
+        current_layer += 1
+        yield {
+            'type': 'status',
+            'message': f'Discovering vertical-specific investors...',
+            'layer': f'Layer {current_layer}/7: Vertical-Specific Discovery',
+            'progress': int((current_layer / total_layers) * 50)
+        }
+        
+        try:
+            verticals = ['FinTech', 'BioTech', 'AI', 'ClimateTech', 'Enterprise SaaS']
+            vertical_results = await discovery.discover_from_vertical_specific(verticals)
+            discovered_vcs.extend(vertical_results)
+            stats['discovered'] += len(vertical_results)
+            yield {
+                'type': 'log',
+                'level': 'success',
+                'message': f'Vertical-Specific: Found {len(vertical_results)} investment vehicles'
+            }
+        except Exception as e:
+            yield {
+                'type': 'log',
+                'level': 'warn',
+                'message': f'Vertical-specific discovery failed: {str(e)[:100]}'
+            }
+        
+        # Layer 6: Regional
+        current_layer += 1
+        yield {
+            'type': 'status',
+            'message': f'Discovering from regional directories...',
+            'layer': f'Layer {current_layer}/7: Regional Discovery',
+            'progress': int((current_layer / total_layers) * 50)
+        }
+        
+        try:
+            regional_results = await discovery.discover_from_regional_directories()
+            discovered_vcs.extend(regional_results)
+            stats['discovered'] += len(regional_results)
+            yield {
+                'type': 'log',
+                'level': 'success',
+                'message': f'Regional: Found {len(regional_results)} investment vehicles'
+            }
+        except Exception as e:
+            yield {
+                'type': 'log',
+                'level': 'warn',
+                'message': f'Regional discovery failed: {str(e)[:100]}'
+            }
+        
+        # Processing: Adding to database
+        yield {
+            'type': 'status',
+            'message': f'Processing {len(discovered_vcs)} discovered investment vehicles...',
+            'layer': 'Processing: Adding to database',
+            'progress': 60
+        }
+        
+        added_count = 0
+        skipped_duplicates = 0
+        errors = 0
+        
+        for idx, vc in enumerate(discovered_vcs):
+            try:
+                firm_name = vc.get('firm_name', '').strip()
+                if not firm_name:
+                    continue
+                
+                # Check if VC already exists
+                existing = conn.execute(
+                    "SELECT id, firm_name FROM vcs WHERE firm_name = ?",
+                    (firm_name,)
+                ).fetchone()
+                
+                domain = vc.get('domain', '').strip()
+                if not existing and domain:
+                    existing = conn.execute(
+                        "SELECT id, firm_name FROM vcs WHERE domain = ?",
+                        (domain,)
+                    ).fetchone()
+                
+                if existing:
+                    skipped_duplicates += 1
+                    continue
+                
+                focus_areas_json = json.dumps(vc.get('focus_areas', []))
+                vc_id = abs(hash(vc['firm_name'])) % 1000000
+                conn.execute("""
+                    INSERT INTO vcs 
+                    (id, firm_name, url, domain, type, stage, focus_areas, discovered_from, user_added, verified, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    vc_id,
+                    vc['firm_name'],
+                    vc['url'],
+                    vc.get('domain', ''),
+                    vc.get('type', 'VC'),
+                    vc.get('stage', 'Unknown'),
+                    focus_areas_json,
+                    vc.get('discovered_from', ''),
+                    False,
+                    False,
+                    datetime.now(),
+                    datetime.now()
+                ))
+                added_count += 1
+                
+                # Update progress every 10 items
+                if (idx + 1) % 10 == 0:
+                    progress = 60 + int((idx + 1) / len(discovered_vcs) * 30)
+                    yield {
+                        'type': 'progress',
+                        'progress': progress
+                    }
+                    yield {
+                        'type': 'stats',
+                        'stats': {
+                            'discovered': len(discovered_vcs),
+                            'added': added_count,
+                            'skipped': skipped_duplicates,
+                            'errors': errors
+                        }
+                    }
+                    
+            except Exception as e:
+                errors += 1
+                yield {
+                    'type': 'log',
+                    'level': 'error',
+                    'message': f'Error adding VC {vc.get("firm_name", "Unknown")}: {str(e)[:100]}'
+                }
+        
+        conn.commit()
+        
+        stats['added'] = added_count
+        stats['skipped'] = skipped_duplicates
+        stats['errors'] = errors
+        
+        yield {
+            'type': 'complete',
+            'progress': 100,
+            'result': {
+                'discovered': len(discovered_vcs),
+                'added': added_count,
+                'skipped_duplicates': skipped_duplicates,
+                'errors': errors,
+                'stats': stats
+            }
+        }
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        yield {
+            'type': 'error',
+            'message': f'Discovery failed: {str(e)}'
+        }
+
 @app.post("/portfolios/discover")
 async def discover_vcs():
-    """Discover new VCs from web sources"""
+    """Discover new VCs from web sources (non-streaming, for backward compatibility)"""
     try:
         discovery = VCDiscovery()
         discovered_vcs = await discovery.discover_all()
@@ -2382,13 +2696,11 @@ async def discover_vcs():
                 if not firm_name:
                     continue
                 
-                # Check if VC already exists by firm_name (exact match)
                 existing = conn.execute(
                     "SELECT id, firm_name FROM vcs WHERE firm_name = ?",
                     (firm_name,)
                 ).fetchone()
                 
-                # Also check by domain if available
                 domain = vc.get('domain', '').strip()
                 if not existing and domain:
                     existing = conn.execute(
@@ -2398,39 +2710,31 @@ async def discover_vcs():
                 
                 if existing:
                     skipped_duplicates += 1
-                    if skipped_duplicates <= 5:  # Log first 5 duplicates
-                        print(f"  [SKIP] Duplicate: {firm_name} (exists as: {existing[1]})")
                     continue
                 
-                if not existing:
-                    focus_areas_json = json.dumps(vc.get('focus_areas', []))
-                    vc_id = abs(hash(vc['firm_name'])) % 1000000
-                    conn.execute("""
-                        INSERT INTO vcs 
-                        (id, firm_name, url, domain, type, stage, focus_areas, discovered_from, user_added, verified, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        vc_id,
-                        vc['firm_name'],
-                        vc['url'],
-                        vc.get('domain', ''),
-                        vc.get('type', 'VC'),
-                        vc.get('stage', 'Unknown'),
-                        focus_areas_json,
-                        vc.get('discovered_from', ''),
-                        False,
-                        False,
-                        datetime.now(),
-                        datetime.now()
-                    ))
-                    added_count += 1
+                focus_areas_json = json.dumps(vc.get('focus_areas', []))
+                vc_id = abs(hash(vc['firm_name'])) % 1000000
+                conn.execute("""
+                    INSERT INTO vcs 
+                    (id, firm_name, url, domain, type, stage, focus_areas, discovered_from, user_added, verified, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    vc_id,
+                    vc['firm_name'],
+                    vc['url'],
+                    vc.get('domain', ''),
+                    vc.get('type', 'VC'),
+                    vc.get('stage', 'Unknown'),
+                    focus_areas_json,
+                    vc.get('discovered_from', ''),
+                    False,
+                    False,
+                    datetime.now(),
+                    datetime.now()
+                ))
+                added_count += 1
             except Exception as e:
                 errors += 1
-                firm_name = vc.get('firm_name', 'Unknown')
-                print(f"  [ERROR] Error adding VC {firm_name}: {e}")
-                if errors <= 5:  # Log first 5 errors
-                    import traceback
-                    print(f"    Traceback: {traceback.format_exc()[:200]}")
                 continue
         
         conn.commit()
@@ -2450,6 +2754,27 @@ async def discover_vcs():
             status_code=500,
             detail=f"VC discovery failed: {str(e)}. This operation can take several minutes and may timeout. Please try again or check backend logs."
         )
+
+@app.get("/portfolios/discover/stream")
+async def discover_vcs_stream():
+    """Discover new VCs with real-time progress updates via Server-Sent Events"""
+    async def event_generator():
+        try:
+            async for update in _discover_vcs_with_progress():
+                yield {
+                    "event": "message",
+                    "data": json_module.dumps(update)
+                }
+        except Exception as e:
+            yield {
+                "event": "error",
+                "data": json_module.dumps({
+                    "type": "error",
+                    "message": str(e)
+                })
+            }
+    
+    return EventSourceResponse(event_generator())
 
 @app.post("/portfolios/add", response_model=PortfolioInfo)
 async def add_vc(request: AddVCRequest):
