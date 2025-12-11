@@ -31,7 +31,7 @@ async def trigger_portfolio_scraping():
         
         if response.status_code == 200:
             session_id = response.headers.get('X-Session-ID')
-            print(f"\n✅ Portfolio scraping started!")
+            print(f"\n[SUCCESS] Portfolio scraping started!")
             print(f"Session ID: {session_id}")
             print(f"\nScraping is running in the background.")
             print(f"Companies will be added to the database as they're discovered.")
@@ -39,11 +39,11 @@ async def trigger_portfolio_scraping():
             print(f"\nOr check database periodically for new companies.")
             return session_id
         else:
-            print(f"❌ Error: {response.status_code}")
+            print(f"[ERROR] Status: {response.status_code}")
             print(f"Response: {response.text[:500]}")
             return None
     except Exception as e:
-        print(f"❌ Error triggering scraping: {e}")
+        print(f"[ERROR] Error triggering scraping: {e}")
         import traceback
         traceback.print_exc()
         return None
