@@ -2771,22 +2771,44 @@ async def discover_vcs_stream():
             }
             
             # Start discovery and stream updates
-            async for update in _discover_vcs_with_progress():
+            # Note: _discover_vcs_with_progress() is an async generator
+            # We need to properly iterate over it
+            discovery_gen = _discover_vcs_with_progress()
+            try:
+                async for update in discovery_gen:
+                    yield {
+                        "event": "message",
+                        "data": json_module.dumps(update)
+                    }
+            except StopAsyncIteration:
+                # Generator completed normally
                 yield {
                     "event": "message",
-                    "data": json_module.dumps(update)
+                    "data": json_module.dumps({
+                        "type": "status",
+                        "message": "Discovery completed",
+                        "progress": 100
+                    })
                 }
+        except GeneratorExit:
+            # Client disconnected, cleanup
+            print("Client disconnected from discovery stream")
+            raise
         except Exception as e:
             import traceback
             error_details = traceback.format_exc()
             print(f"Discovery stream error: {error_details}")
-            yield {
-                "event": "error",
-                "data": json_module.dumps({
-                    "type": "error",
-                    "message": f"Discovery failed: {str(e)}"
-                })
-            }
+            try:
+                yield {
+                    "event": "message",
+                    "data": json_module.dumps({
+                        "type": "error",
+                        "message": f"Discovery failed: {str(e)}"
+                    })
+                }
+            except:
+                # If we can't send error, just log it
+                pass
     
     return EventSourceResponse(event_generator())
 
