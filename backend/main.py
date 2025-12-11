@@ -3148,36 +3148,95 @@ async def discover_vcs_stream():
             print("[DEBUG] Discovery generator created, starting iteration...")
             update_count = 0
             
+            discovery_completed = False
+            # Create a queue to collect updates from discovery
+            update_queue = asyncio.Queue()
+            
+            # Background task to consume discovery updates and release lock when done
+            async def consume_discovery():
+                nonlocal discovery_completed
+                global _vc_discovery_in_progress, _vc_discovery_start_time
+                try:
+                    async for update in discovery_gen:
+                        await update_queue.put(update)
+                        # If discovery completed, release lock
+                        if update.get('type') in ('complete', 'error'):
+                            discovery_completed = True
+                            print(f"[INFO] Discovery completed in background task")
+                            # Release lock when discovery completes
+                            with _vc_discovery_lock:
+                                _vc_discovery_in_progress = False
+                                _vc_discovery_start_time = None
+                                print("[INFO] VC discovery lock released (discovery completed)")
+                            break
+                except Exception as e:
+                    print(f"[ERROR] Error in discovery background task: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # Release lock on error
+                    with _vc_discovery_lock:
+                        _vc_discovery_in_progress = False
+                        _vc_discovery_start_time = None
+                        print("[INFO] VC discovery lock released (error in discovery)")
+                finally:
+                    # Signal completion
+                    await update_queue.put(None)
+            
+            # Start background task
+            discovery_task = asyncio.create_task(consume_discovery())
+            
             try:
-                async for update in discovery_gen:
-                    update_count += 1
-                    print(f"[DEBUG] Received update #{update_count}: {update.get('type', 'unknown')} - {update.get('message', 'no message')[:100]}")
-                    yield {
-                        "event": "message",
-                        "data": json_module.dumps(update)
-                    }
-                    
-                    # If we got a complete or error message, generator should finish
-                    if update.get('type') in ('complete', 'error'):
-                        print(f"Discovery completed with {update_count} updates")
-                        break
+                # Stream updates from queue to client
+                while True:
+                    try:
+                        # Wait for update with timeout to allow checking if client disconnected
+                        update = await asyncio.wait_for(update_queue.get(), timeout=1.0)
+                        if update is None:
+                            # Discovery completed
+                            break
                         
-            except StopAsyncIteration:
-                # Generator completed normally (shouldn't happen if we break on complete)
-                print(f"[WARN] Discovery generator completed with StopAsyncIteration after {update_count} updates (no complete message)")
-                # Send completion message if generator ended without one
-                if update_count == 0:
-                    yield {
-                        "event": "message",
-                        "data": json_module.dumps({
-                            "type": "error",
-                            "message": "Discovery generator completed without any updates. This may indicate an error."
-                        })
-                    }
+                        update_count += 1
+                        print(f"[DEBUG] Received update #{update_count}: {update.get('type', 'unknown')} - {update.get('message', 'no message')[:100]}")
+                        
+                        try:
+                            yield {
+                                "event": "message",
+                                "data": json_module.dumps(update)
+                            }
+                        except GeneratorExit:
+                            # Client disconnected, but discovery continues in background
+                            print("Client disconnected from discovery stream, discovery continues in background task")
+                            # Don't break - let discovery task continue
+                            # Consume remaining updates silently
+                            while True:
+                                try:
+                                    remaining_update = await asyncio.wait_for(update_queue.get(), timeout=0.1)
+                                    if remaining_update is None:
+                                        break
+                                except asyncio.TimeoutError:
+                                    # Check if task is done
+                                    if discovery_task.done():
+                                        break
+                                    continue
+                            break
+                        
+                        # If we got a complete or error message, generator should finish
+                        if update.get('type') in ('complete', 'error'):
+                            print(f"Discovery completed with {update_count} updates")
+                            discovery_completed = True
+                            break
+                    except asyncio.TimeoutError:
+                        # Check if discovery task is done
+                        if discovery_task.done():
+                            break
+                        continue
+                        
             except GeneratorExit:
-                # Client disconnected, cleanup
-                print("Client disconnected from discovery stream")
-                raise
+                # Client disconnected, but discovery continues in background
+                print("Client disconnected from discovery stream, discovery continues in background task")
+                discovery_completed = False
+                # Don't cancel the task - let it complete
+                # Lock will be released by background task when discovery completes
             except Exception as gen_err:
                 # Error in generator iteration
                 import traceback
@@ -3191,9 +3250,12 @@ async def discover_vcs_stream():
                     })
                 }
         except GeneratorExit:
-            # Client disconnected, cleanup
-            print("Client disconnected from discovery stream")
-            raise
+            # Client disconnected, but discovery may still be running
+            # Don't release lock here - let discovery complete in background
+            print("Client disconnected from discovery stream, but discovery continues in background")
+            # Don't raise - let the generator finish naturally so discovery can complete
+            # The lock will be released when discovery actually completes
+            return
         except Exception as e:
             import traceback
             error_details = traceback.format_exc()
@@ -3210,12 +3272,13 @@ async def discover_vcs_stream():
                 # If we can't send error, just log it
                 pass
         finally:
-            # Always reset the flag when done
-            global _vc_discovery_in_progress, _vc_discovery_start_time
-            with _vc_discovery_lock:
-                _vc_discovery_in_progress = False
-                _vc_discovery_start_time = None
-                print("[INFO] VC discovery lock released")
+            # Lock is released by background task when discovery completes
+            # Don't release lock here - let background task handle it
+            if 'discovery_completed' in locals() and discovery_completed:
+                print("[INFO] Discovery stream ended, discovery was completed")
+            else:
+                # Discovery may still be running in background task - don't release lock
+                print("[INFO] Discovery stream ended, but discovery continues in background task - lock will be released when discovery completes")
     
     return EventSourceResponse(event_generator())
 

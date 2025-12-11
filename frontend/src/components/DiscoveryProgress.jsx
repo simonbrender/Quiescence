@@ -17,7 +17,10 @@ export default function DiscoveryProgress({ onComplete, onClose }) {
   const [logs, setLogs] = useState([])
   const [isComplete, setIsComplete] = useState(false)
   const [error, setError] = useState(null)
+  const [companyCount, setCompanyCount] = useState(0)
+  const [lastUpdate, setLastUpdate] = useState(null)
   const eventSourceRef = useRef(null)
+  const pollIntervalRef = useRef(null)
 
   useEffect(() => {
     // Connect to Server-Sent Events endpoint

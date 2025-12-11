@@ -104,3 +104,5 @@ python validate_export.py
 
 **Status**: ✅ Export script is working correctly. Waiting for backend restart to export all companies.
 
+
+

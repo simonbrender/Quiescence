@@ -212,3 +212,5 @@ The system now scales to:
 
 All limits have been removed, comprehensive scrolling added, and auto-discovery enhanced to capture every active investor.
 
+
+

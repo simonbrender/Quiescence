@@ -97,3 +97,5 @@
 
 The error handling has been improved to provide clear, actionable error messages. When the backend is not running, users will see a specific message telling them exactly what to do, rather than a generic "Failed to load portfolios" error.
 
+
+

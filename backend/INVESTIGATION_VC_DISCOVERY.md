@@ -139,3 +139,5 @@ Based on Gemini 3 Pro estimates:
 7. ⏳ Add LinkedIn discovery
 8. ⏳ Build comprehensive known lists (500+ VCs)
 
+
+

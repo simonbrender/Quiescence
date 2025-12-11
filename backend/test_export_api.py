@@ -19,3 +19,5 @@ if response.json():
     print("\nFirst company structure:")
     print(json.dumps(response.json()[0], indent=2))
 
+
+

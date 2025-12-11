@@ -182,3 +182,5 @@ From the UI, I can see:
 
 The system is **READY TO SCALE** to 6k+ companies and discover ALL active early-stage investors.
 
+
+

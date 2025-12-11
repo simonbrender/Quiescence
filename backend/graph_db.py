@@ -371,3 +371,5 @@ def sync_duckdb_to_graph(duckdb_conn, graph_db: GraphDB):
     
     print("[GraphDB] Sync complete!")
 
+
+

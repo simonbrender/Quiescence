@@ -169,3 +169,5 @@ async def get_6k_companies():
 if __name__ == "__main__":
     asyncio.run(get_6k_companies())
 
+
+
