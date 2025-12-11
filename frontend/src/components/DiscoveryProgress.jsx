@@ -80,12 +80,34 @@ export default function DiscoveryProgress({ onComplete, onClose }) {
     }
 
     eventSource.onerror = (err) => {
-      console.error('SSE error:', err)
+      console.error('SSE error:', err, 'readyState:', eventSource.readyState)
+      // EventSource.CONNECTING = 0, OPEN = 1, CLOSED = 2
       if (eventSource.readyState === EventSource.CLOSED) {
-        setError('Connection closed. Discovery may have completed or failed.')
-        setIsComplete(true)
-      } else {
-        setError('Connection error. Discovery may still be running.')
+        // Only show error if we haven't received completion message AND we've been waiting
+        if (!isComplete) {
+          // If we have logs, discovery was running - connection interrupted
+          if (logs.length > 0) {
+            setLogs(prev => [...prev.slice(-49), {
+              level: 'warn',
+              message: 'Connection interrupted. Discovery may still be running in background.',
+              timestamp: new Date().toLocaleTimeString()
+            }])
+            // Don't set error immediately - discovery might complete in background
+            setTimeout(() => {
+              if (!isComplete && eventSourceRef.current?.readyState === EventSource.CLOSED) {
+                setError('Connection closed. Check backend logs or try again.')
+                setIsComplete(true)
+              }
+            }, 5000) // Wait 5 seconds before showing error
+          } else {
+            // No logs yet - connection failed immediately
+            setError('Failed to connect to discovery service. Please check backend is running.')
+            setIsComplete(true)
+          }
+        }
+      } else if (eventSource.readyState === EventSource.CONNECTING) {
+        // Still connecting - don't show error yet
+        setStatus('Reconnecting...')
       }
     }
 
