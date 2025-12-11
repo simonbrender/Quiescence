@@ -2316,40 +2316,40 @@ async def discover_vcs():
         discovered_vcs = await discovery.discover_all()
         
         added_count = 0
-    for vc in discovered_vcs:
-        try:
-            # Check if VC already exists
-            existing = conn.execute(
-                "SELECT id FROM vcs WHERE firm_name = ?",
-                (vc['firm_name'],)
-            ).fetchone()
-            
-            if not existing:
-                focus_areas_json = json.dumps(vc.get('focus_areas', []))
-                vc_id = abs(hash(vc['firm_name'])) % 1000000
-                conn.execute("""
-                    INSERT INTO vcs 
-                    (id, firm_name, url, domain, type, stage, focus_areas, discovered_from, user_added, verified, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    vc_id,
-                    vc['firm_name'],
-                    vc['url'],
-                    vc.get('domain', ''),
-                    vc.get('type', 'VC'),
-                    vc.get('stage', 'Unknown'),
-                    focus_areas_json,
-                    vc.get('discovered_from', ''),
-                    False,
-                    False,
-                    datetime.now(),
-                    datetime.now()
-                ))
-                added_count += 1
-        except Exception as e:
-            print(f"Error adding VC {vc.get('firm_name')}: {e}")
-            continue
-    
+        for vc in discovered_vcs:
+            try:
+                # Check if VC already exists
+                existing = conn.execute(
+                    "SELECT id FROM vcs WHERE firm_name = ?",
+                    (vc['firm_name'],)
+                ).fetchone()
+                
+                if not existing:
+                    focus_areas_json = json.dumps(vc.get('focus_areas', []))
+                    vc_id = abs(hash(vc['firm_name'])) % 1000000
+                    conn.execute("""
+                        INSERT INTO vcs 
+                        (id, firm_name, url, domain, type, stage, focus_areas, discovered_from, user_added, verified, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        vc_id,
+                        vc['firm_name'],
+                        vc['url'],
+                        vc.get('domain', ''),
+                        vc.get('type', 'VC'),
+                        vc.get('stage', 'Unknown'),
+                        focus_areas_json,
+                        vc.get('discovered_from', ''),
+                        False,
+                        False,
+                        datetime.now(),
+                        datetime.now()
+                    ))
+                    added_count += 1
+            except Exception as e:
+                print(f"Error adding VC {vc.get('firm_name')}: {e}")
+                continue
+        
         conn.commit()
         
         return {
