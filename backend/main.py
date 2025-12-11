@@ -504,6 +504,14 @@ async def get_companies(
         if company_dict.get('funding_amount'):
             company_dict['funding_amount'] = company_dict['funding_amount'] / 1000000
         
+        # Ensure scores are not None (default to 0.0 for Pydantic validation)
+        if company_dict.get('messaging_score') is None:
+            company_dict['messaging_score'] = 0.0
+        if company_dict.get('motion_score') is None:
+            company_dict['motion_score'] = 0.0
+        if company_dict.get('market_score') is None:
+            company_dict['market_score'] = 0.0
+        
         companies.append(CompanyResponse(**company_dict))
     
     return companies
@@ -893,6 +901,14 @@ async def advanced_search(request: AdvancedSearchRequest):
         # Convert funding to millions for display
         if company_dict.get('funding_amount'):
             company_dict['funding_amount'] = company_dict['funding_amount'] / 1000000
+        
+        # Ensure scores are not None (default to 0.0 for Pydantic validation)
+        if company_dict.get('messaging_score') is None:
+            company_dict['messaging_score'] = 0.0
+        if company_dict.get('motion_score') is None:
+            company_dict['motion_score'] = 0.0
+        if company_dict.get('market_score') is None:
+            company_dict['market_score'] = 0.0
         
         companies.append(CompanyResponse(**company_dict))
     
