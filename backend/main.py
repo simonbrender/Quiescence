@@ -2314,8 +2314,8 @@ async def discover_vcs():
     try:
         discovery = VCDiscovery()
         discovered_vcs = await discovery.discover_all()
-    
-    added_count = 0
+        
+        added_count = 0
     for vc in discovered_vcs:
         try:
             # Check if VC already exists
