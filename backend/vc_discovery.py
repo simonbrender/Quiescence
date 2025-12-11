@@ -1,12 +1,15 @@
 """
 Celerio Scout - VC Discovery System
 Automatically discovers and categorizes VC firms from web sources
+Comprehensive multi-layered discovery system
 """
 import asyncio
 import re
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 from bs4 import BeautifulSoup
 import aiohttp
+from urllib.parse import urlparse, urljoin, quote_plus
+import json
 
 try:
     from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
@@ -14,15 +17,71 @@ try:
 except ImportError:
     CRAWL4AI_AVAILABLE = False
 
+# Try to import Google Search API
+try:
+    from googlesearch import search as google_search
+    GOOGLE_SEARCH_AVAILABLE = True
+except ImportError:
+    GOOGLE_SEARCH_AVAILABLE = False
+
 
 class VCDiscovery:
-    """Discovers VC firms from various web sources"""
+    """Discovers VC firms from various web sources - Comprehensive multi-layered system"""
     
-    # Known VC directory websites
-    VC_DIRECTORIES = [
-        "https://www.crunchbase.com/discover/organization.companies/venture_capital",
-        "https://www.pitchbook.com/profiles/firm-type/venture-capital",
-    ]
+    def __init__(self):
+        self.seen_firms: Set[str] = set()
+        self.seen_domains: Set[str] = set()
+    
+    def _normalize_name(self, name: str) -> str:
+        """Normalize firm name for deduplication"""
+        if not name:
+            return ""
+        normalized = name.lower().strip()
+        normalized = re.sub(r'\s+', ' ', normalized)
+        for suffix in [' llc', ' inc', ' ltd', ' limited', ' corp', ' corporation']:
+            if normalized.endswith(suffix):
+                normalized = normalized[:-len(suffix)].strip()
+        return normalized
+    
+    def _extract_domain(self, url: str) -> str:
+        """Extract domain from URL"""
+        if not url:
+            return ""
+        try:
+            parsed = urlparse(url)
+            domain = parsed.netloc or parsed.path.split('/')[0]
+            domain = domain.replace('www.', '').lower()
+            return domain
+        except:
+            return ""
+    
+    def _is_duplicate(self, vc: Dict) -> bool:
+        """Check if VC is duplicate"""
+        firm_name = vc.get('firm_name', '').strip()
+        domain = vc.get('domain', '').strip()
+        
+        if not firm_name:
+            return True
+        
+        normalized_name = self._normalize_name(firm_name)
+        
+        if normalized_name in self.seen_firms:
+            return True
+        
+        if domain and domain in self.seen_domains:
+            return True
+        
+        if not domain:
+            url = vc.get('url', '')
+            domain = self._extract_domain(url)
+            if domain and domain in self.seen_domains:
+                return True
+        
+        self.seen_firms.add(normalized_name)
+        if domain:
+            self.seen_domains.add(domain)
+        
+        return False
     
     # Focus area keywords for categorization
     FOCUS_KEYWORDS = {
@@ -546,6 +605,15 @@ class VCDiscovery:
         except Exception as e:
             print(f"[ERROR] F6S discovery failed: {e}\n")
         
+        # Layer 2.5: StudioHub (Studios) - Comprehensive
+        try:
+            print("[LAYER 2.5] StudioHub Studio Discovery...")
+            studiohub_studios = await self.discover_from_studiohub()
+            all_vcs.extend(studiohub_studios)
+            print(f"[SUCCESS] StudioHub: {len(studiohub_studios)} Studios\n")
+        except Exception as e:
+            print(f"[ERROR] StudioHub discovery failed: {e}\n")
+        
         # Layer 3: Existing VC lists discovery
         try:
             print("[LAYER 3] VC Directory Lists Discovery...")
@@ -555,7 +623,41 @@ class VCDiscovery:
         except Exception as e:
             print(f"[ERROR] Directory discovery failed: {e}\n")
         
-        # Layer 4: Known lists (fallback)
+        # Layer 4: Google Search Discovery
+        try:
+            print("[LAYER 4] Google Search Discovery...")
+            search_queries = [
+                "venture capital firms directory",
+                "top VC firms",
+                "venture studios list",
+                "startup accelerators directory",
+            ]
+            google_results = await self.discover_from_google_search(search_queries, max_results_per_query=30)
+            all_vcs.extend(google_results)
+            print(f"[SUCCESS] Google Search: {len(google_results)} investment vehicles\n")
+        except Exception as e:
+            print(f"[ERROR] Google search discovery failed: {e}\n")
+        
+        # Layer 5: Vertical-Specific Discovery
+        try:
+            print("[LAYER 5] Vertical-Specific Discovery...")
+            verticals = ['FinTech', 'BioTech', 'AI', 'ClimateTech', 'Enterprise SaaS']
+            vertical_results = await self.discover_from_vertical_specific(verticals)
+            all_vcs.extend(vertical_results)
+            print(f"[SUCCESS] Vertical-Specific: {len(vertical_results)} investment vehicles\n")
+        except Exception as e:
+            print(f"[ERROR] Vertical-specific discovery failed: {e}\n")
+        
+        # Layer 6: Regional Discovery
+        try:
+            print("[LAYER 6] Regional Directory Discovery...")
+            regional_results = await self.discover_from_regional_directories()
+            all_vcs.extend(regional_results)
+            print(f"[SUCCESS] Regional: {len(regional_results)} investment vehicles\n")
+        except Exception as e:
+            print(f"[ERROR] Regional discovery failed: {e}\n")
+        
+        # Layer 7: Known lists (fallback)
         if len(all_vcs) < 50:
             print("[LAYER 4] Known Lists Fallback...")
             known_vcs = [

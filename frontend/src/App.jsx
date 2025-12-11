@@ -7,6 +7,7 @@ import CompanyDetail from './components/CompanyDetail'
 import PortfolioSelector from './components/PortfolioSelector'
 import AdvancedSearch from './components/AdvancedSearch'
 import InvestorGraph from './components/InvestorGraph'
+import DiscoverySourcesManager from './components/DiscoverySourcesManager'
 import { getCompanies, getStats, scanCompany, exportCompanies } from './services/api'
 import { Button } from './components/ui/button'
 import { Card } from './components/ui/card'
@@ -22,6 +23,7 @@ function App() {
   const [showPortfolioSelector, setShowPortfolioSelector] = useState(false)
   const [showAdvancedSearch, setShowAdvancedSearch] = useState(false)
   const [showInvestorGraph, setShowInvestorGraph] = useState(false)
+  const [showDiscoverySources, setShowDiscoverySources] = useState(false)
   const [searchResults, setSearchResults] = useState(null)
   const [searchQuery, setSearchQuery] = useState(null)
   const [exporting, setExporting] = useState(false)

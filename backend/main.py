@@ -20,6 +20,7 @@ from scorer import calculate_scores, scan_company
 from seeds import load_mock_data
 from portfolio_scraper import PortfolioScraper
 from vc_discovery import VCDiscovery
+from discovery_sources import DiscoverySourceManager
 
 # Global lock to prevent concurrent portfolio scraping
 # Note: asyncio.Lock() must be created in async context, so we use a threading lock for checking
@@ -188,6 +189,9 @@ conn.execute("""
         updated_at TIMESTAMP
     )
 """)
+
+# Initialize Discovery Source Manager
+discovery_source_manager = DiscoverySourceManager(conn)
 
 # Investor-Company relationship tables
 conn.execute("""

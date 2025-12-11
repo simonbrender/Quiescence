@@ -82,6 +82,46 @@ export const scrapePortfolios = async (portfolioNames) => {
   }
 }
 
+export const getDiscoverySources = async (enabledOnly = false) => {
+  try {
+    const response = await api.get(`/discovery/sources?enabled_only=${enabledOnly}`)
+    return response.data
+  } catch (error) {
+    console.error('getDiscoverySources error:', error)
+    throw error
+  }
+}
+
+export const addDiscoverySource = async (sourceData) => {
+  try {
+    const response = await api.post('/discovery/sources', sourceData)
+    return response.data
+  } catch (error) {
+    console.error('addDiscoverySource error:', error)
+    throw error
+  }
+}
+
+export const updateDiscoverySource = async (sourceId, updates) => {
+  try {
+    const response = await api.put(`/discovery/sources/${sourceId}`, updates)
+    return response.data
+  } catch (error) {
+    console.error('updateDiscoverySource error:', error)
+    throw error
+  }
+}
+
+export const deleteDiscoverySource = async (sourceId) => {
+  try {
+    const response = await api.delete(`/discovery/sources/${sourceId}`)
+    return response.data
+  } catch (error) {
+    console.error('deleteDiscoverySource error:', error)
+    throw error
+  }
+}
+
 export const discoverVCs = async () => {
   try {
     const response = await api.post('/portfolios/discover', {}, { timeout: 300000 }) // 5 minute timeout for discovery
