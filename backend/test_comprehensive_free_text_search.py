@@ -16,6 +16,7 @@ import requests
 import json
 import time
 import sys
+import csv
 from pathlib import Path
 from typing import List, Dict, Set
 from datetime import datetime
@@ -91,6 +92,15 @@ class FreeTextSearchTestSuite:
                 print(f"  [RESULT] Found {len(companies)} companies in {elapsed:.2f}s")
                 
                 if companies:
+                    # Export to CSV for validation
+                    safe_query = "".join(c for c in query[:50] if c.isalnum() or c in (' ', '-', '_')).strip().replace(' ', '_')
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    csv_filename = f"companies_{safe_query}_{timestamp}.csv"
+                    self.export_companies_to_csv(companies, csv_filename, query)
+                    
+                    # Data quality checks
+                    self.validate_data_quality(companies, query)
+                    
                     print(f"  Sample companies:")
                     for i, company in enumerate(companies[:3], 1):
                         name = company.get('name', 'N/A')

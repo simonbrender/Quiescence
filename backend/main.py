@@ -666,15 +666,23 @@ async def advanced_search(request: AdvancedSearchRequest):
     
     # Filter by employee count
     # IMPORTANT: Remove "OR ... IS NULL" to only match companies that actually have employee data
-    if request.employees_min is not None and column_exists('companies', 'employee_count'):
-        query += " AND employee_count >= ?"
-        params.append(request.employees_min)
-        filters_applied = True
+    # Check both 'employee_count' and 'employees' column names
+    employee_col = None
+    if column_exists('companies', 'employee_count'):
+        employee_col = 'employee_count'
+    elif column_exists('companies', 'employees'):
+        employee_col = 'employees'
     
-    if request.employees_max is not None and column_exists('companies', 'employee_count'):
-        query += " AND employee_count <= ?"
-        params.append(request.employees_max)
-        filters_applied = True
+    if employee_col:
+        if request.employees_min is not None:
+            query += f" AND {employee_col} >= ?"
+            params.append(request.employees_min)
+            filters_applied = True
+        
+        if request.employees_max is not None:
+            query += f" AND {employee_col} <= ?"
+            params.append(request.employees_max)
+            filters_applied = True
     
     # Filter by months post-raise
     # IMPORTANT: Remove "OR ... IS NULL" to only match companies that actually have raise dates
@@ -700,10 +708,28 @@ async def advanced_search(request: AdvancedSearchRequest):
         params.extend(request.fund_tiers)
         filters_applied = True
     
+    # Debug: Print what filters were requested
+    print(f"[ADVANCED-SEARCH] Request filters:")
+    print(f"  stages: {request.stages}")
+    print(f"  focus_areas: {request.focus_areas}")
+    print(f"  funding_min: {request.funding_min}, funding_max: {request.funding_max}")
+    print(f"  employees_min: {request.employees_min}, employees_max: {request.employees_max}")
+    print(f"  months_post_raise_min: {request.months_post_raise_min}, months_post_raise_max: {request.months_post_raise_max}")
+    print(f"  fund_tiers: {request.fund_tiers}")
+    print(f"[ADVANCED-SEARCH] filters_applied: {filters_applied}")
+    print(f"[ADVANCED-SEARCH] Final query: {query[:500]}")
+    print(f"[ADVANCED-SEARCH] Query params: {params}")
+    
     # If no filters were applied, return empty result (don't return all companies)
     if not filters_applied:
         print(f"[ADVANCED-SEARCH] WARNING: No filters applied, returning empty result to prevent returning all companies")
+        print(f"[ADVANCED-SEARCH] Request had: stages={request.stages}, focus_areas={request.focus_areas}, funding={request.funding_min}-{request.funding_max}, employees={request.employees_min}-{request.employees_max}")
+        print(f"[ADVANCED-SEARCH] This means none of the requested filters matched existing columns or had valid values")
         return []
+    
+    # Export query details for debugging
+    print(f"[ADVANCED-SEARCH] Executing query: {query[:300]}...")
+    print(f"[ADVANCED-SEARCH] With {len(params)} parameters: {params[:5]}...")
     
     # Rank by stall indicators (lower scores = more stalling)
     if request.rank_by_stall:
